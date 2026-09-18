@@ -446,15 +446,15 @@ namespace OmenSuperHub {
         if (isSilent) {
           // silent: cpu30/gpu20 → 0RPM, 60℃ → maxRpm/3, 87℃ → maxRpm*2/3, maxTemp → maxRpm
           cpuTempList = new List<int> { 30, 60, 87, maxCpu };
-          cpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm - maxRpm / 10 };
+          cpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm };
           gpuTempList = new List<int> { 30 - delta, 60 - delta, 87 - delta, maxGPUT };
-          gpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm - maxRpm / 10 };
+          gpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm };
         } else {
           // cool: cpu45/gpu35 → maxRpm/4, (maxTemp-5)℃ → maxRpm
           cpuTempList = new List<int> { 45, maxCpu - 5, maxCpu };
-          cpuSpeedList = new List<int> { maxRpm / 4, maxRpm, maxRpm + maxRpm / 10 };
+          cpuSpeedList = new List<int> { maxRpm / 4, maxRpm * 4 / 5, maxRpm };
           gpuTempList = new List<int> { 45 - delta, maxGPUT - 5, maxGPUT };
-          gpuSpeedList = new List<int> { maxRpm / 4, maxRpm, maxRpm + maxRpm / 10 };
+          gpuSpeedList = new List<int> { maxRpm / 4, maxRpm * 4 / 5, maxRpm };
         }
 
         return new FanCurveProfile(
@@ -532,30 +532,36 @@ namespace OmenSuperHub {
         var gpuTempList = new List<int>();
         var gpuSpeedList = new List<int>();
 
-        foreach (string line in allLines) {
-          if (string.IsNullOrWhiteSpace(line)) continue;
-          int eqIdx = line.IndexOf('=');
-          if (eqIdx < 0) continue;
-          string key = line.Substring(0, eqIdx).Trim();
-          string valueStr = line.Substring(eqIdx + 1).Trim();
-          var values = valueStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                               .Select(s => int.Parse(s.Trim()))
-                               .ToList();
+        try {
+          foreach (string line in allLines) {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            int eqIdx = line.IndexOf('=');
+            if (eqIdx < 0) continue;
+            string key = line.Substring(0, eqIdx).Trim();
+            string valueStr = line.Substring(eqIdx + 1).Trim();
+            var values = valueStr.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                                 .Select(s => int.Parse(s.Trim()))
+                                 .ToList();
 
-          switch (key) {
-            case "Fan_Table_CPU_Temperature_List":
-              cpuTempList = values;
-              break;
-            case "Fan_Table_CPU_Fan_Speed_List":
-              cpuSpeedList = values;
-              break;
-            case "Fan_Table_GPU_Temperature_List":
-              gpuTempList = values;
-              break;
-            case "Fan_Table_GPU_Fan_Speed_List":
-              gpuSpeedList = values;
-              break;
+            switch (key) {
+              case "Fan_Table_CPU_Temperature_List":
+                cpuTempList = values;
+                break;
+              case "Fan_Table_CPU_Fan_Speed_List":
+                cpuSpeedList = values;
+                break;
+              case "Fan_Table_GPU_Temperature_List":
+                gpuTempList = values;
+                break;
+              case "Fan_Table_GPU_Fan_Speed_List":
+                gpuSpeedList = values;
+                break;
+            }
           }
+        } catch (Exception ex) {
+          Logger.Error($"{absoluteFilePath} parse error ({ex.Message}), regenerating.");
+          LoadDefaultFanConfig(absoluteFilePath);
+          return;
         }
 
         // 校验数据完整性
@@ -618,18 +624,24 @@ namespace OmenSuperHub {
 
     static void LoadFanConfigFromLists(List<int> cpuTempList, List<int> cpuSpeedList,
                                    List<int> gpuTempList, List<int> gpuSpeedList) {
+      int maxFanRpm = Math.Min(25500, platformMaxFanSpeed ?? 25500);
+      int maxCpuTemperature = Math.Max(1, maxCPUTemp ?? 120);
+      int maxGpuTemperature = Math.Max(1, maxGPUTemp ?? 120);
+
       lock (CPUTempFanMap) {
         CPUTempFanMap.Clear();
         GPUTempFanMap.Clear();
 
         for (int i = 0; i < cpuTempList.Count; i++) {
-          int speedRpm = cpuSpeedList[i];
-          CPUTempFanMap[cpuTempList[i]] = speedRpm; // 双风扇同速
+          int temperature = Math.Max(0, Math.Min(maxCpuTemperature, cpuTempList[i]));
+          int speedRpm = Math.Max(0, Math.Min(maxFanRpm, cpuSpeedList[i]));
+          CPUTempFanMap[temperature] = speedRpm; // 双风扇同速
         }
 
         for (int i = 0; i < gpuTempList.Count; i++) {
-          int speedRpm = gpuSpeedList[i];
-          GPUTempFanMap[gpuTempList[i]] = speedRpm;
+          int temperature = Math.Max(0, Math.Min(maxGpuTemperature, gpuTempList[i]));
+          int speedRpm = Math.Max(0, Math.Min(maxFanRpm, gpuSpeedList[i]));
+          GPUTempFanMap[temperature] = speedRpm;
         }
       }
     }
@@ -643,21 +655,22 @@ namespace OmenSuperHub {
       // 首次获取到真实温度数据前不进行转速控制，fanControlTimer处理-100将直接return
       int resultSpeed = -100;
 
-      if (tempReady && monitorCPU && cpuTempReady) {
+      if (tempReady && monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) {
         int cpuFanSpeed = GetFanSpeedForSpecificTemperature(smoothedCPUTemp, CPUTempFanMap);
         resultSpeed = Math.Max(resultSpeed, cpuFanSpeed);
       }
 
-      if (tempReady && monitorGPU && gpuTempReady) {
+      if (tempReady && monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)) {
         int gpuFanSpeed = GetFanSpeedForSpecificTemperature(smoothedGPUTemp, GPUTempFanMap);
         resultSpeed = Math.Max(resultSpeed, gpuFanSpeed);
       }
 
-      // 获取不到温度时使用传感器温度备用
-      if (monitorCPU && !monitorGPU) {
-        if (CPUPower == 0 && isAmbientSensorSupported) {
-          resultSpeed = GetFanSpeedForSpecificTemperature(GetFittingTemperature(), CPUTempFanMap);
-        }
+      // 仅在 CPU 温度本身不可用时才使用环境温度兜底。
+      // 不能用 CPUPower==0 判断温度失效，否则空闲/功耗传感器缺失时会覆盖真实 CPU 温度。
+      if (resultSpeed < 0 && monitorCPU && !cpuTempReady && !monitorGPU && isAmbientSensorSupported) {
+        float fittedTemperature = GetFittingTemperature();
+        if (IsPlausibleTemperature(fittedTemperature))
+          resultSpeed = GetFanSpeedForSpecificTemperature(fittedTemperature, CPUTempFanMap);
       }
 
       return resultSpeed;
