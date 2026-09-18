@@ -249,7 +249,6 @@ namespace OmenSuperHub {
           }
           //isCPUPowerControlSupported = IsPowerControlSupported(deviceType); // 似乎不准确
           InitPlatformMaxFanSpeed();
-          InitMaxTemp();
         });
         var t2 = Task.Run(() => {
           biosVersion = GetBiosVersion();
@@ -289,6 +288,8 @@ namespace OmenSuperHub {
 
         //Console.WriteLine($"1: {sw.ElapsedMilliseconds}ms");
         Task.WaitAll(t1, t2, t3, t4, t5, t6, t7, t8, t9);
+        // 平台/NVIDIA 探测完成后再读取温限，避免 hasNVIDIAGpu 的启动竞态。
+        InitMaxTemp();
         //Console.WriteLine($"2: {sw.ElapsedMilliseconds}ms");
 
         if (FourZoneSupportHelper.IsAnimationSupported(kbType, deviceType, cycleNumber)) {
@@ -596,6 +597,8 @@ namespace OmenSuperHub {
         bool gGpu = false;
         bool exactCpuClockFound = false;
         int cpuTempPriority = 0;
+        float cpuFallbackTempSum = 0f;
+        int cpuFallbackTempCount = 0;
         float? tCpuSample = null, tGpuSample = null;
         float pCpu = -1f, pGpu = -1f;
         float fCpu = 0, fGpu = 0;
@@ -618,12 +621,20 @@ namespace OmenSuperHub {
                 if (hw.HardwareType == LibreHardwareType.Cpu) {
                   if (sensor.SensorType == LibreSensorType.Temperature && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
-                    int priority = string.Equals(sensor.Name, "CPU Package", StringComparison.OrdinalIgnoreCase) ? 3
-                        : sensor.Name.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ? 2
-                        : sensor.Name.IndexOf("Package", StringComparison.OrdinalIgnoreCase) >= 0 ? 1 : 0;
-                    if (priority > cpuTempPriority && IsPlausibleTemperature(value)) {
-                      tCpuSample = value;
-                      cpuTempPriority = priority;
+                    if (IsPlausibleTemperature(value)) {
+                      int priority = string.Equals(sensor.Name, "CPU Package", StringComparison.OrdinalIgnoreCase) ? 3
+                          : sensor.Name.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ? 2
+                          : sensor.Name.IndexOf("Package", StringComparison.OrdinalIgnoreCase) >= 0 ? 1 : 0;
+                      if (priority > cpuTempPriority) {
+                        tCpuSample = value;
+                        cpuTempPriority = priority;
+                      } else if (priority == 0 &&
+                                 sensor.Name.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) < 0) {
+                        // 没有标准 Package/Tctl 命名时，使用其余真实 CPU 温度的平均值兜底。
+                        // 相比随便挑单核心温度，这样更不容易被短时尖峰带着风扇乱跳。
+                        cpuFallbackTempSum += value;
+                        cpuFallbackTempCount++;
+                      }
                     }
                   }
                   if (sensor.SensorType == LibreSensorType.Power && sensor.Name.Contains("Package") && sensor.Value.HasValue) {
@@ -654,6 +665,8 @@ namespace OmenSuperHub {
             }
           }
           }
+          if (!tCpuSample.HasValue && cpuFallbackTempCount > 0)
+            tCpuSample = cpuFallbackTempSum / cpuFallbackTempCount;
           gGpu = tGpuSample.HasValue;
           float outCpuTemp = tCpuSample ?? -1f;
           float outGpuTemp = tGpuSample ?? -1f;
