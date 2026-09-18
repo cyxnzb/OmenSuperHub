@@ -422,18 +422,20 @@ namespace OmenSuperHub {
 
     static void InitMaxTemp() {
       maxCPUTemp = null;
-      if (platformSettings != null) {
-        int throttle = platformSettings.temperatureThrottlingPerformance;
-        if (throttle > 0) {
-          maxCPUTemp = throttle;
-        }
-        if (hasNVIDIAGpu) {
-          System.Threading.Tasks.Task.Run(() => {
-            throttle = GetGpuTemperatureTarget();
-            if (throttle > 50) {
-              maxGPUTemp = throttle;
-            }
-          });
+      maxGPUTemp = null;
+      if (platformSettings == null) return;
+
+      int cpuThrottle = platformSettings.temperatureThrottlingPerformance;
+      if (cpuThrottle > 0)
+        maxCPUTemp = cpuThrottle;
+
+      if (hasNVIDIAGpu) {
+        try {
+          int gpuThrottle = GetGpuTemperatureTarget();
+          if (gpuThrottle > 50 && gpuThrottle < 130)
+            maxGPUTemp = gpuThrottle;
+        } catch (Exception ex) {
+          Logger.Error($"InitMaxTemp: GPU temperature target unavailable: {ex.Message}");
         }
       }
     }
