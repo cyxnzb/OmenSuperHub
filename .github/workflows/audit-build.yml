@@ -30,3 +30,11 @@ jobs:
 
       - name: Build Release x64
         run: msbuild OmenSuperHub.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:RestorePackages=false
+
+      - name: Upload UAT build
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmenSuperHub-audit-${{ github.sha }}
+          path: bin/x64/Release/
+          if-no-files-found: error
+          retention-days: 14
