@@ -111,7 +111,7 @@ namespace OmenSuperHub {
     static bool monitorCPU = true, monitorGPU = true, isConnectedToNVIDIA = true, prevIsConnectedToNVIDIA = true, omenKeyTriggered = false; // isTwoBytePL4 = false;
     static bool hasNVIDIAGpu; // 启动时一次性检测，硬件状态不会改变
     static string monitorRefreshRate = "low"; // 刷新频率：low=1s, high=0.25s
-    static List<int> fanSpeedNow = new List<int> { 20, 20, 0 };
+    static readonly List<int> fanSpeedNow = new List<int> { 20, 20, 0 };
     static float respondSpeed = 0.4f;
 
     static int? maxCPUTemp = null;
@@ -1061,8 +1061,16 @@ namespace OmenSuperHub {
         Logger.Error($"[UpdateTooltip] QueryHardware 异常: {ex.Message}");
       }
 
-      if (monitorFan)
-        fanSpeedNow = GetFanLevel();
+      if (monitorFan) {
+        var latestFanSpeed = GetFanLevel();
+        if (latestFanSpeed != null && latestFanSpeed.Count >= 3) {
+          lock (fanSpeedNow) {
+            fanSpeedNow[0] = latestFanSpeed[0];
+            fanSpeedNow[1] = latestFanSpeed[1];
+            fanSpeedNow[2] = latestFanSpeed[2];
+          }
+        }
+      }
 
       UpdateTrayIconText();
       //Console.WriteLine("UpdateTooltip");
