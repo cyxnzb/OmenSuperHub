@@ -1347,15 +1347,13 @@ namespace OmenSuperHub {
           tempSensitivity = "high";
           cpuPower = $"{targetPL1Perf} W";
           tppPower = $"{targetPL1Perf} W";
-          gpuCoreOverclock = 120;
-          gpuMemoryOverclock = 400;
+          // 内置预设只使用平台公开的性能/功耗能力，不自动施加通用 GPU 超频。
+          // 不同 GPU 体质差异很大，超频仅保留在“高级调优”供用户显式选择。
           break;
         case "PresetGpuPriority":
           tempSensitivity = "high";
           cpuPower = $"{targetPL1Default} W";
           tppPower = $"{targetPL1Perf} W";
-          gpuCoreOverclock = 120;
-          gpuMemoryOverclock = 0;
           break;
         case "PresetLightUse":
           fanTable = "silent";
