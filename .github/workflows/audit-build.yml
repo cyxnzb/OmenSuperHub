@@ -8,6 +8,10 @@ on:
     branches:
       - master
 
+concurrency:
+  group: audit-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
