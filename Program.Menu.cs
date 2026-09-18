@@ -647,6 +647,7 @@ namespace OmenSuperHub {
         cpuPowerTrackBar.ValueChanged += (sender, e) => {
           int val = cpuPowerTrackBar.Value;
           cpuPowerValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} W");
+          if (suppressPerformanceSliderEvents) return;
           cpuPower = val + " W";
           ScheduleLatestHardwareApply("cpuPower", () => {
             if (isCPUPowerControlSupported)
@@ -726,6 +727,7 @@ namespace OmenSuperHub {
         tppTrackBar.ValueChanged += (sender, e) => {
           int val = tppTrackBar.Value;
           tppValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} W");
+          if (suppressPerformanceSliderEvents) return;
           tppPower = val + " W";
           ScheduleLatestHardwareApply("tppPower", () => {
             SetConcurrentTdp((byte)val);
@@ -785,6 +787,7 @@ namespace OmenSuperHub {
         gpuCoreOverclockTrackBar.ValueChanged += (sender, e) => {
           int val = gpuCoreOverclockTrackBar.Value * 15;
           gpuCoreOverclockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} MHz");
+          if (suppressPerformanceSliderEvents) return;
           gpuCoreOverclock = val;
           ScheduleLatestHardwareApply("gpuCoreOverclock", () => {
             SetCoreClockOffset(val);
@@ -824,6 +827,7 @@ namespace OmenSuperHub {
         gpuMemoryOverclockTrackBar.ValueChanged += (sender, e) => {
           int val = gpuMemoryOverclockTrackBar.Value * 100;
           gpuMemoryOverclockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} MHz");
+          if (suppressPerformanceSliderEvents) return;
           gpuMemoryOverclock = val;
           ScheduleLatestHardwareApply("gpuMemoryOverclock", () => {
             SetMemoryClockOffset(val);
@@ -865,8 +869,9 @@ namespace OmenSuperHub {
 
         gpuClockTrackBar.ValueChanged += (sender, e) => {
           int val = gpuClockTrackBar.Value * 10;
-          gpuClock = val;
           gpuClockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} MHz");
+          if (suppressPerformanceSliderEvents) return;
+          gpuClock = val;
           ScheduleLatestHardwareApply("gpuClock", () => {
             SetGPUClockLimit(val);
             SaveConfig("GpuClock");
@@ -910,16 +915,17 @@ namespace OmenSuperHub {
 
         maxFrameRateTrackBar.ValueChanged += (sender, e) => {
           int val = IndexToFrameRate(maxFrameRateTrackBar.Value);
-          maxFrameRate = val;
-          ScheduleLatestHardwareApply("maxFrameRate", () => {
-            NvApiWrapper.NVAPI_SetMaxFrameRate(val);
-            SaveConfig("MaxFrameRate");
-          });
           if (val > 0) {
             maxFrameRateValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} FPS");
           } else {
             maxFrameRateValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, Strings.Unlimited);
           }
+          if (suppressPerformanceSliderEvents) return;
+          maxFrameRate = val;
+          ScheduleLatestHardwareApply("maxFrameRate", () => {
+            NvApiWrapper.NVAPI_SetMaxFrameRate(val);
+            SaveConfig("MaxFrameRate");
+          });
           UpdateCheckedState("maxFrameRateGroup", Strings.SetMaxFrameRateSlider);
         };
 
