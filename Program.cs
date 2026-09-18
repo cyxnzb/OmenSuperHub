@@ -138,6 +138,8 @@ namespace OmenSuperHub {
 
     // Cache last written values to avoid unnecessary disk reads/writes
     static string lastCpuText = null, lastGpuText = null, lastFanText = null, pawnIOState = "";
+    static int _isSyncingDataToTxt = 0;
+    static int _floatingUpdatePending = 0;
     static string tempDisplayMode = "smoothed"; // 温度显示方式：smoothed=平滑值, raw=原始值
     static int? platformMaxFanSpeed = null; // 平台最大转速（RPM），由LoadDefaultFanConfig获取后缓存
     static SortedDictionary<float, int> CPUTempFanMap = new SortedDictionary<float, int>();
@@ -1163,21 +1165,19 @@ namespace OmenSuperHub {
 
     static void SyncDataToTxt() {
       if (dataLocalize != "on") return;
+      if (Interlocked.CompareExchange(ref _isSyncingDataToTxt, 1, 0) != 0) return;
+
+      string cpuText = ((int)Math.Round(CPUTemp)).ToString();
+      string gpuText = ((int)Math.Round(GPUTemp)).ToString();
+      string fanText;
+      lock (fanSpeedNow) {
+        fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
+      }
+
       System.Threading.Tasks.Task.Run(() => {
         try {
-          // 获取程序根目录
           string basePath = AppDomain.CurrentDomain.BaseDirectory;
 
-          // 将浮点数转换为整数并转换为文本
-          string cpuText = ((int)Math.Round(CPUTemp)).ToString();
-          string gpuText = ((int)Math.Round(GPUTemp)).ToString();
-          string fanText;
-          // brief lock to avoid potential race on the list
-          lock (fanSpeedNow) {
-            fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
-          }
-
-          // 仅当与上次内存中保存的值不同时才写入磁盘，避免不必要的 I/O
           try {
             if (lastCpuText == null || lastCpuText != cpuText) {
               File.WriteAllText(Path.Combine(basePath, "cpu_temp.txt"), cpuText);
@@ -1204,10 +1204,10 @@ namespace OmenSuperHub {
           } catch (Exception ex) {
             Logger.Error($"Sync error when writing fan_rpm.txt: {ex.Message}");
           }
-
         } catch (Exception ex) {
-          // 忽略文件被占用的偶发错误，或者在这里记录日志
           Logger.Error("Sync error: " + ex.Message);
+        } finally {
+          Interlocked.Exchange(ref _isSyncingDataToTxt, 0);
         }
       });
     }
@@ -1548,16 +1548,31 @@ namespace OmenSuperHub {
 
       if (form == null || form.IsDisposed) return;
 
-      lock (_floatingLock) {
-        if (floatingForm == null || floatingForm.IsDisposed) return;
-        // debug模式下需取消注释，release模式下需注释以避免打断右键菜单
-        // if (floatingForm.InvokeRequired) {
-        //  floatingForm.BeginInvoke(new System.Action(() => UpdateFloatingText()));
-        //  return;
-        // }
-        floatingForm.TopMost = true;
-        floatingForm.SetText(monitorText(), textSize, floatingBarLoc, GetFloatingScreen());
+      string text = monitorText();
+      int size = textSize;
+      string location = floatingBarLoc;
+      Screen screen = GetFloatingScreen();
+
+      if (form.InvokeRequired) {
+        if (Interlocked.CompareExchange(ref _floatingUpdatePending, 1, 0) != 0) return;
+        try {
+          form.BeginInvoke(new Action(() => {
+            try {
+              if (form.IsDisposed) return;
+              form.TopMost = true;
+              form.SetText(text, size, location, screen);
+            } finally {
+              Interlocked.Exchange(ref _floatingUpdatePending, 0);
+            }
+          }));
+        } catch (InvalidOperationException) {
+          Interlocked.Exchange(ref _floatingUpdatePending, 0);
+        }
+        return;
       }
+
+      form.TopMost = true;
+      form.SetText(text, size, location, screen);
     }
 
     //生成监控信息
