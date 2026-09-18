@@ -1086,6 +1086,18 @@ namespace OmenSuperHub {
           }
         }
 
+        // 自动风扇始终保留 CPU 作为基础安全温度源。
+        // 兼容旧配置/手工修改注册表导致 CPU、GPU 监控均关闭或仅 GPU 监控的情况。
+        if (fanControl == "auto" && !monitorCPU) {
+          monitorCPU = true;
+          cpuTempReady = false;
+          rawPowerCPU = 0f;
+          rawFrequencyCPU = 0f;
+          CPUPower = 0f;
+          CPUFrequency = 0f;
+          SaveConfig("MonitorCPU");
+        }
+
         UpdateCheckedState("monitorCPUGroup", monitorCPU ? Strings.MonitorCpuOn : Strings.MonitorCpuOff);
         UpdateCheckedState("monitorGPUGroup", monitorGPU ? Strings.MonitorGpuOn : Strings.MonitorGpuOff);
         UpdateCheckedState("monitorFanGroup", monitorFan ? Strings.MonitorFanOn : Strings.MonitorFanOff);
