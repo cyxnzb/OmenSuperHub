@@ -184,6 +184,9 @@ namespace OmenSuperHub {
       presetsMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.PresetNote) { Enabled = false });
       if (isCPUPowerControlSupported) {
         presetsMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.PresetInternalNote) { Enabled = false });
+        var balancedItem = CreateMenuItem(Strings.PresetBalanced, "presetsGroup", (s, e) => applyPresetLogic("PresetBalanced"), currentPreset == "PresetBalanced", Strings.PresetBalancedTooltip);
+        balancedItem.Name = "PresetBalanced";
+        presetsMenu.DropDownItems.Add(balancedItem);
         var extremeItem = CreateMenuItem(Strings.PresetExtreme, "presetsGroup", (s, e) => applyPresetLogic("PresetExtreme"), currentPreset == "PresetExtreme", Strings.PresetExtremeTooltip);
         extremeItem.Name = "PresetExtreme";
         presetsMenu.DropDownItems.Add(extremeItem);
@@ -255,7 +258,7 @@ namespace OmenSuperHub {
       menu.Items.Add(presetsMenu);
 
       menu.Items.Add(new ToolStripSeparator());
-      bool isBuiltInPreset = (currentPreset == "PresetExtreme" || currentPreset == "PresetGpuPriority" || currentPreset == "PresetLightUse");
+      bool isBuiltInPreset = IsBuiltInPreset(currentPreset);
 
       ToolStripMenuItem fanConfigMenu = new ToolStripMenuItem(Strings.FanConfig);
       fanConfigMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.FanCurveNote) { Enabled = false });
@@ -427,6 +430,10 @@ namespace OmenSuperHub {
       menu.Items.Add(fanControlMenu);
 
       performanceControlMenu = new ToolStripMenuItem(Strings.PerfControl);
+      var advancedPerformanceMenu = new ToolStripMenuItem(Strings.AdvancedPerformanceTuning);
+      advancedPerformanceMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.AdvancedPerformanceNote) { Enabled = false });
+      advancedPerformanceMenu.DropDownItems.Add(new ToolStripSeparator());
+
       // 图形模式
       if (supportHotSwitch) {
         if (NvGraphicsMode == GraphicsSwitcherMode.Optimus || NvGraphicsMode == GraphicsSwitcherMode.Hybrid) {
@@ -544,7 +551,7 @@ namespace OmenSuperHub {
         };
         performanceControlMenu.DropDownItems.Add(restartGpuMenu);
       }
-      performanceControlMenu.DropDownItems.Add(new ToolStripSeparator()); // Separator between groups
+      // 低层功耗/超频参数统一收进“高级调优”，普通用户主菜单只保留图形与GPU工具。
       //ToolStripMenuItem pl4Menu = new ToolStripMenuItem("PL4");
       //pl4Menu.DropDownItems.Add(CreateMenuItem("不设置", "pl4PowerGroup", (s, e) => {
       //  powerLimit4 = "null";
@@ -587,7 +594,7 @@ namespace OmenSuperHub {
             SaveConfig("IccMax");
           }, false));
         }
-        performanceControlMenu.DropDownItems.Add(iccMaxMenu);
+        advancedPerformanceMenu.DropDownItems.Add(iccMaxMenu);
       }
       if (IsLoadLineSupported()) {
         ToolStripMenuItem acLoadLineMenu = new ToolStripMenuItem(Strings.AcLoadLineMenu);
@@ -605,7 +612,7 @@ namespace OmenSuperHub {
             SaveConfig("AcLoadLine");
           }, false));
         }
-        performanceControlMenu.DropDownItems.Add(acLoadLineMenu);
+        advancedPerformanceMenu.DropDownItems.Add(acLoadLineMenu);
       }
 
       if (isCPUPowerControlSupported) {
@@ -658,7 +665,7 @@ namespace OmenSuperHub {
 
         cpuPowerMenu.DropDownItems.Add(cpuPowerTrackBar);
         cpuPowerMenu.DropDownItems.Add(cpuPowerValueLabel);
-        performanceControlMenu.DropDownItems.Add(cpuPowerMenu);
+        advancedPerformanceMenu.DropDownItems.Add(cpuPowerMenu);
       }
 
       ToolStripMenuItem gpuPowerMenu = new ToolStripMenuItem(Strings.GpuPowerControlMenu);
@@ -746,7 +753,7 @@ namespace OmenSuperHub {
       }, false));
       gpuPowerMenu.DropDownItems.Add(dStateMenu);
 
-      performanceControlMenu.DropDownItems.Add(gpuPowerMenu);
+      advancedPerformanceMenu.DropDownItems.Add(gpuPowerMenu);
       if (hasNVIDIAGpu) {
         ToolStripMenuItem gpuCoreOverclockMenu = new ToolStripMenuItem(Strings.GpuCoreOverclock);
         gpuCoreOverclockMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "gpuCoreOverclockGroup", (s, e) => {
@@ -778,7 +785,7 @@ namespace OmenSuperHub {
         };
         gpuCoreOverclockMenu.DropDownItems.Add(gpuCoreOverclockTrackBar);
         gpuCoreOverclockMenu.DropDownItems.Add(gpuCoreOverclockValueLabel);
-        performanceControlMenu.DropDownItems.Add(gpuCoreOverclockMenu);
+        advancedPerformanceMenu.DropDownItems.Add(gpuCoreOverclockMenu);
 
         ToolStripMenuItem gpuMemoryOverclockMenu = new ToolStripMenuItem(Strings.GpuMemoryOverclock);
         gpuMemoryOverclockMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "gpuMemoryOverclockGroup", (s, e) => {
@@ -810,7 +817,7 @@ namespace OmenSuperHub {
         };
         gpuMemoryOverclockMenu.DropDownItems.Add(gpuMemoryOverclockTrackBar);
         gpuMemoryOverclockMenu.DropDownItems.Add(gpuMemoryOverclockValueLabel);
-        performanceControlMenu.DropDownItems.Add(gpuMemoryOverclockMenu);
+        advancedPerformanceMenu.DropDownItems.Add(gpuMemoryOverclockMenu);
 
         ToolStripMenuItem gpuClockMenu = new ToolStripMenuItem(Strings.GpuClockMenu);
         gpuClockMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.GraphicsBoostClockTip(graphicsBoostClock)) { Enabled = false });
@@ -853,7 +860,7 @@ namespace OmenSuperHub {
 
         gpuClockMenu.DropDownItems.Add(gpuClockTrackBar);
         gpuClockMenu.DropDownItems.Add(gpuClockValueLabel);
-        performanceControlMenu.DropDownItems.Add(gpuClockMenu);
+        advancedPerformanceMenu.DropDownItems.Add(gpuClockMenu);
 
         InitFrameRateMap();
         ToolStripMenuItem maxFrameRateMenu = new ToolStripMenuItem(Strings.MaxFrameRateMenu);
@@ -901,7 +908,7 @@ namespace OmenSuperHub {
 
         maxFrameRateMenu.DropDownItems.Add(maxFrameRateTrackBar);
         maxFrameRateMenu.DropDownItems.Add(maxFrameRateValueLabel);
-        performanceControlMenu.DropDownItems.Add(maxFrameRateMenu);
+        advancedPerformanceMenu.DropDownItems.Add(maxFrameRateMenu);
 
         ToolStripMenuItem DBMenu = new ToolStripMenuItem(Strings.DbVersionMenu);
         if (platformSettings != null && platformSettings.TppSupport) {
@@ -919,7 +926,13 @@ namespace OmenSuperHub {
           ChangeDBState(true);
           SaveConfig("DBVersion");
         }, true, Strings.PerfDbNormalTooltip));
-        performanceControlMenu.DropDownItems.Add(DBMenu);
+        advancedPerformanceMenu.DropDownItems.Add(DBMenu);
+      }
+
+      if (advancedPerformanceMenu.DropDownItems.Count > 2) {
+        if (performanceControlMenu.DropDownItems.Count > 0)
+          performanceControlMenu.DropDownItems.Add(new ToolStripSeparator());
+        performanceControlMenu.DropDownItems.Add(advancedPerformanceMenu);
       }
       menu.Items.Add(performanceControlMenu);
 
