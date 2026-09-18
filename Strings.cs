@@ -300,9 +300,9 @@
     // 高温警告（气泡）
     public static string HighTempBalloonTitle => T("温度过高警告", "溫度過高警告", "High Temperature Warning");
     public static string HighTempBalloonText(int limit, float temp) => T(
-        $"检测到CPU温度高于{limit - 5}℃ ({temp:F1}℃)，且风扇处于固定转速状态，OSH已自动切换为降温模式并将风扇控制切换为自动模式。",
-        $"偵測到CPU溫度高於{limit - 5}℃ ({temp:F1}℃)，且風扇處於固定轉速狀態，OSH已自動切換至降溫模式並將風扇控制改為自動。",
-        $"CPU temperature exceeded {limit - 5}°C ({temp:F1}°C) with a fixed fan speed. OSH has switched to Cool mode and Auto fan control.");
+        $"检测到硬件温度接近温度上限（阈值 {limit - 2}℃，当前 {temp:F1}℃），且风扇处于固定转速状态，OSH已自动切换为降温模式并将风扇控制切换为自动模式。",
+        $"偵測到硬體溫度接近溫度上限（門檻 {limit - 2}℃，目前 {temp:F1}℃），且風扇處於固定轉速狀態，OSH已自動切換至降溫模式並將風扇控制改為自動。",
+        $"Hardware temperature is near its limit (threshold {limit - 2}°C, current {temp:F1}°C) with a fixed fan speed. OSH has switched to Cool mode and Auto fan control.");
 
     // ─────────────────────────────────────────────────────────────────────────
     // 性能控制 — 提示文本
