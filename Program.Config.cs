@@ -1037,6 +1037,9 @@ namespace OmenSuperHub {
     /// 不读写注册表，可以在启动恢复和运行时切换预设时复用。
     /// </summary>
     static void ApplyPresetSettings(string presetKey) {
+      CancelPendingHardwareApplies();
+      suppressPerformanceSliderEvents = true;
+      try {
       string effectivePreset = presetKey == "Restore" ? currentPreset : presetKey;
       ApplyPresetFirmwareMode(effectivePreset);
 
@@ -1237,23 +1240,49 @@ namespace OmenSuperHub {
         UpdateCheckedState("acLoadLineGroup", (180 - 10 * llVal).ToString());
       }
 
-      // TPP 延迟 1s 应用，避免与其他设置冲突
+      // TPP 延迟 1s 应用，避免与其他设置冲突。硬件写入留在线程池，
+      // UI 更新必须 marshal 回 WinForms 线程，且不能再次触发滑块硬件写入。
       string tppSnapshot = tppPower;
       System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ => {
+        int? trackValue = null;
+        string checkedText = null;
+
         if (tppSnapshot == "null") {
-          UpdateCheckedState("tppPowerGroup", Strings.NotSet);
+          checkedText = Strings.NotSet;
         } else if (tppSnapshot == "max") {
           SetConcurrentTdp(254);
-          if (tppTrackBar != null) tppTrackBar.Value = 254;
+          trackValue = 254;
+          checkedText = Strings.SetTppSlider;
         } else if (tppSnapshot.Contains(" W")) {
-          int value = int.Parse(tppSnapshot.Replace(" W", "").Trim());
-          if (value >= 20 && value <= 254) {
+          if (int.TryParse(tppSnapshot.Replace(" W", "").Trim(), out int value) && value >= 20 && value <= 254) {
             SetConcurrentTdp((byte)value);
-            if (tppTrackBar != null) tppTrackBar.Value = value;
-            UpdateCheckedState("tppPowerGroup", Strings.SetTppSlider);
+            trackValue = value;
+            checkedText = Strings.SetTppSlider;
+          }
+        }
+
+        if (_invokeTarget != null && !_invokeTarget.IsDisposed && _invokeTarget.IsHandleCreated) {
+          try {
+            _invokeTarget.BeginInvoke(new Action(() => {
+              bool previousSuppression = suppressPerformanceSliderEvents;
+              suppressPerformanceSliderEvents = true;
+              try {
+                if (trackValue.HasValue && tppTrackBar != null)
+                  tppTrackBar.Value = Math.Max(tppTrackBar.Minimum, Math.Min(tppTrackBar.Maximum, trackValue.Value));
+                if (checkedText != null)
+                  UpdateCheckedState("tppPowerGroup", checkedText);
+              } finally {
+                suppressPerformanceSliderEvents = previousSuppression;
+              }
+            }));
+          } catch (InvalidOperationException) {
+            // 应用退出/句柄销毁期间无需再刷新菜单。
           }
         }
       });
+      } finally {
+        suppressPerformanceSliderEvents = false;
+      }
     }
 
     static void ConfigureBuiltInPresetDefaults(string presetKey) {
