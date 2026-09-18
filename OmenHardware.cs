@@ -386,20 +386,14 @@ namespace OmenSuperHub {
     }
 
     public static List<int> GetFanLevel() {
-      // Send command to retrieve fan speed
-      List<int> fanSpeedNow = new List<int> { 0, 0, 0 };
+      // A failed BIOS read must not be represented as 0 RPM; zero is a valid fan value.
       byte[] fanLevel = SendOmenBiosWmi(0x2D, new byte[] { 0x00, 0x00, 0x00, 0x00 }, 128);
-      if (fanLevel != null) {
-        if (fanLevel.Length >= 3) {
-          fanSpeedNow[0] = fanLevel[0];
-          fanSpeedNow[1] = fanLevel[1];
-          fanSpeedNow[2] = fanLevel[2];
-        }
-        else {
-          Logger.Error($": GetFanLevel:- Failed: Error  length={fanLevel.Length}");
-        }
+      if (fanLevel == null || fanLevel.Length < 3) {
+        Logger.Error($": GetFanLevel:- Failed: Error length={(fanLevel == null ? 0 : fanLevel.Length)}");
+        return null;
       }
-      return fanSpeedNow;
+
+      return new List<int> { fanLevel[0], fanLevel[1], fanLevel[2] };
     }
 
     public static byte[] GetFanTable() {
