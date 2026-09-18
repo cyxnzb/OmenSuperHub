@@ -121,6 +121,9 @@ namespace OmenSuperHub {
     static DateTime lastCpuTempSampleUtc = DateTime.MinValue, lastGpuTempSampleUtc = DateTime.MinValue;
     static DateTime lastCpuPowerSampleUtc = DateTime.MinValue, lastGpuPowerSampleUtc = DateTime.MinValue;
     static readonly TimeSpan hardwareSampleTimeout = TimeSpan.FromSeconds(5);
+    static readonly object deferredHardwareApplyLock = new object();
+    static readonly Dictionary<string, int> deferredHardwareApplyVersions = new Dictionary<string, int>();
+    static int deferredHardwareApplyGeneration = 0;
     const int AutoFanDeadband = 2;       // 200 RPM
     const int AutoFanRiseStep = 3;       // max +300 RPM per second
     const int AutoFanFallStep = 2;       // max -200 RPM per second
@@ -1189,6 +1192,52 @@ namespace OmenSuperHub {
           Logger.Error("Sync error: " + ex.Message);
         }
       });
+    }
+
+    static void CancelPendingHardwareApplies() {
+      lock (deferredHardwareApplyLock) {
+        deferredHardwareApplyGeneration++;
+      }
+    }
+
+    static void ScheduleLatestHardwareApply(string key, Action action, int delayMs = 200) {
+      int version;
+      int generation;
+      lock (deferredHardwareApplyLock) {
+        deferredHardwareApplyVersions.TryGetValue(key, out int currentVersion);
+        version = currentVersion + 1;
+        deferredHardwareApplyVersions[key] = version;
+        generation = deferredHardwareApplyGeneration;
+      }
+
+      System.Threading.Tasks.Task.Run(async () => {
+        await System.Threading.Tasks.Task.Delay(delayMs);
+        lock (deferredHardwareApplyLock) {
+          if (generation != deferredHardwareApplyGeneration ||
+              !deferredHardwareApplyVersions.TryGetValue(key, out int currentVersion) ||
+              currentVersion != version)
+            return;
+        }
+
+        try {
+          action();
+        } catch (Exception ex) {
+          Logger.Error($"Deferred hardware apply ({key}) failed: {ex.Message}");
+        }
+      });
+    }
+
+    static void ApplyHardwareSettingNow(string key, Action action) {
+      lock (deferredHardwareApplyLock) {
+        deferredHardwareApplyVersions.TryGetValue(key, out int currentVersion);
+        deferredHardwareApplyVersions[key] = currentVersion + 1;
+      }
+
+      try {
+        action();
+      } catch (Exception ex) {
+        Logger.Error($"Hardware apply ({key}) failed: {ex.Message}");
+      }
     }
 
     // 硬件传感器查询
