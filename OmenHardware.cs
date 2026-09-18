@@ -638,16 +638,15 @@ namespace OmenSuperHub {
 
     public static bool IsSwFanControlSupport() {
       byte[] systemDesignData = GetSystemDesignData();
-      if (systemDesignData != null && systemDesignData.Length != 0) {
-        return (systemDesignData[4] & 1) > 0;
-      }
-      return false;
+      if (systemDesignData == null || systemDesignData.Length < 5)
+        return false;
+      return (systemDesignData[4] & 1) > 0;
     }
 
     public static ThermalPolicyVersion GetThermalPolicyVersion() {
       ThermalPolicyVersion thermalPolicyVersion = ThermalPolicyVersion.V0;
       byte[] systemDesignData = GetSystemDesignData();
-      if (systemDesignData != null && systemDesignData.Length != 0)
+      if (systemDesignData != null && systemDesignData.Length >= 4)
         thermalPolicyVersion = (ThermalPolicyVersion)systemDesignData[3];
       if ((new string[6]
       {
