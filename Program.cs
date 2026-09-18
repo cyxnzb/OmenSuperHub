@@ -543,26 +543,35 @@ namespace OmenSuperHub {
       }
       //Console.Error.WriteLine("CRASH: " + $"3: {sw.ElapsedMilliseconds}ms");
       int sleepMs = 1000;
+      var computerLock = new object();
 
       var readThread = new Thread(() => {
         while (true) {
           string line = Console.ReadLine();
           if (line == null) Environment.Exit(0);
           if (line == "GPU:ON") {
-            Volatile.Write(ref isEnabled, false);
-            computer.IsGpuEnabled = true;
-            Volatile.Write(ref isEnabled, true);
+            lock (computerLock) {
+              Volatile.Write(ref isEnabled, false);
+              computer.IsGpuEnabled = true;
+              Volatile.Write(ref isEnabled, true);
+            }
           }
           if (line == "GPU:OFF") {
-            computer.IsGpuEnabled = false;
+            lock (computerLock) {
+              computer.IsGpuEnabled = false;
+            }
           }
           if (line == "CPU:ON") {
-            Volatile.Write(ref isEnabled, false);
-            computer.IsCpuEnabled = true;
-            Volatile.Write(ref isEnabled, true);
+            lock (computerLock) {
+              Volatile.Write(ref isEnabled, false);
+              computer.IsCpuEnabled = true;
+              Volatile.Write(ref isEnabled, true);
+            }
           }
           if (line == "CPU:OFF") {
-            computer.IsCpuEnabled = false;
+            lock (computerLock) {
+              computer.IsCpuEnabled = false;
+            }
           }
           if (line.StartsWith("INTERVAL:") && int.TryParse(line.Substring(9), out int ms) && ms > 0)
             sleepMs = ms;
@@ -583,6 +592,7 @@ namespace OmenSuperHub {
         float pCpu = -1f, pGpu = -1f;
         float fCpu = 0, fGpu = 0;
         try {
+          lock (computerLock) {
           foreach (LibreIHardware hw in computer.Hardware) {
             if (hw.HardwareType != LibreHardwareType.Cpu && hw.HardwareType != LibreHardwareType.GpuNvidia && hw.HardwareType != LibreHardwareType.GpuAmd) continue;
 
@@ -634,6 +644,7 @@ namespace OmenSuperHub {
                 }
               } catch { }
             }
+          }
           }
           gGpu = tGpuSample.HasValue;
           float outCpuTemp = tCpuSample ?? -1f;
@@ -1292,7 +1303,13 @@ namespace OmenSuperHub {
         GPUTemp = (tempDisplayMode == "raw") ? rawTempGPU : smoothedGPUTemp;
 
       int currentMaxCPUTemp = maxCPUTemp ?? 97;
-      if (autoFanProtect == "on" && platformMaxFanSpeed.HasValue && (monitorCPU || monitorGPU) && smoothedCPUTemp > currentMaxCPUTemp - 2 && fanControl.Contains(" RPM")) {
+      int currentMaxGPUTemp = maxGPUTemp ?? 87;
+      bool cpuProtectionTriggered = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc) &&
+                                    smoothedCPUTemp > currentMaxCPUTemp - 2;
+      bool gpuProtectionTriggered = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc) &&
+                                    smoothedGPUTemp > currentMaxGPUTemp - 2;
+      if (autoFanProtect == "on" && platformMaxFanSpeed.HasValue &&
+          (cpuProtectionTriggered || gpuProtectionTriggered) && fanControl.Contains(" RPM")) {
         // 检查是否满足转速低于平台最大转速80%的条件
         bool fanSpeedCondition = true;
         if (platformMaxFanSpeed.Value > 0) {
@@ -1315,8 +1332,10 @@ namespace OmenSuperHub {
           UpdateCheckedState("fanControlGroup", Strings.FanAuto);
           SaveConfig("FanControl");
 
+          int protectionLimit = gpuProtectionTriggered ? currentMaxGPUTemp : currentMaxCPUTemp;
+          float protectionTemp = gpuProtectionTriggered ? smoothedGPUTemp : smoothedCPUTemp;
           trayIcon.BalloonTipTitle = Strings.HighTempBalloonTitle;
-          trayIcon.BalloonTipText = Strings.HighTempBalloonText(currentMaxCPUTemp, smoothedCPUTemp);
+          trayIcon.BalloonTipText = Strings.HighTempBalloonText(protectionLimit, protectionTemp);
           trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
           trayIcon.ShowBalloonTip(3000);
         }
