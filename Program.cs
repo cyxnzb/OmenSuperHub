@@ -1321,6 +1321,20 @@ namespace OmenSuperHub {
       bool getGPU = false;
 
       DateTime queryUtc = DateTime.UtcNow;
+
+      // 即使监控子进程只是“卡住”而没有退出，也不能无限展示/使用最后一次温度。
+      if (cpuTempReady && !IsFresh(lastCpuTempSampleUtc)) {
+        cpuTempReady = false;
+        CPUPower = 0f;
+        CPUFrequency = 0f;
+      }
+      if (gpuTempReady && !IsFresh(lastGpuTempSampleUtc)) {
+        gpuTempReady = false;
+        rawGotGPU = false;
+        GPUPower = 0f;
+        GPUFrequency = 0f;
+      }
+
       if (monitorCPU && cpuTempReady) {
         CPUPower = queryUtc - lastCpuPowerSampleUtc <= hardwareSampleTimeout ? rawPowerCPU : 0f;
         CPUFrequency = rawFrequencyCPU;
