@@ -1402,8 +1402,20 @@ namespace OmenSuperHub {
           presetCustom2Name = (string)key.GetValue("PresetCustom2Name", Strings.PresetCustom2);
           presetCustom3Name = (string)key.GetValue("PresetCustom3Name", Strings.PresetCustom3);
 
-          // 旧版升级兼容：不存在 CurrentPreset 键时迁移
+          // 旧版升级兼容：不存在 CurrentPreset 键时，将旧根键里的实际配置迁移到 Custom1。
+          // 不能直接保存当前内存默认值，否则升级会看似成功、实际丢失用户原配置。
           if (key.GetValue("CurrentPreset") == null) {
+            LoadPresetFields("PresetBalanced"); // 内置预设读取路径正好对应旧版根键字段
+            monitorCPU = Convert.ToBoolean(key.GetValue("MonitorCPU", monitorCPU));
+            if (hasNVIDIAGpu)
+              monitorGPU = Convert.ToBoolean(key.GetValue("MonitorGPU", monitorGPU));
+            else
+              monitorGPU = false;
+            monitorFan = Convert.ToBoolean(key.GetValue("MonitorFan", monitorFan));
+            monitorRefreshRate = (string)key.GetValue("MonitorRefreshRate", monitorRefreshRate);
+            tempDisplayMode = (string)key.GetValue("TempDisplayMode", tempDisplayMode);
+            LoadMonitorMetricSettings("PresetBalanced");
+
             currentPreset = "PresetCustom1";
             SavePresetToRegistry(currentPreset);
             SaveConfig("CurrentPreset");
