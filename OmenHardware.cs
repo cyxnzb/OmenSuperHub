@@ -750,6 +750,19 @@ namespace OmenSuperHub {
       SetFanMode(PerformanceMode.L2);
     }
 
+    // 使用 UI 模式映射而不是直接发送 L2/L7，兼容新旧热策略版本。
+    public static void SetDefaultPerformanceMode() {
+      SetFanMode(PerformanceModeOnUI.Default);
+    }
+
+    public static void SetPerformanceMode() {
+      SetFanMode(PerformanceModeOnUI.Performance);
+    }
+
+    public static void SetEcoPerformanceMode() {
+      SetFanMode(PerformanceModeOnUI.Eco);
+    }
+
     /// <summary>
     /// 设置 GPU 实时功耗状态（对应 commandType=34）
     /// </summary>
