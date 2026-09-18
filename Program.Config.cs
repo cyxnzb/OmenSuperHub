@@ -1296,7 +1296,7 @@ namespace OmenSuperHub {
 
         if (_invokeTarget != null && !_invokeTarget.IsDisposed && _invokeTarget.IsHandleCreated) {
           try {
-            _invokeTarget.BeginInvoke(new Action(() => {
+            _invokeTarget.BeginInvoke(new System.Action(() => {
               bool previousSuppression = suppressPerformanceSliderEvents;
               suppressPerformanceSliderEvents = true;
               try {
