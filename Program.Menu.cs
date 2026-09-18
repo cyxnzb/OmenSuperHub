@@ -1108,8 +1108,8 @@ namespace OmenSuperHub {
         SaveConfig("MonitorCPU");
       }, true));
       monitorCPUMenu.DropDownItems.Add(CreateMenuItem(Strings.MonitorCpuOff, "monitorCPUGroup", (s, e) => {
-        // 自动转速模式下禁止彻底关闭监控
-        if (!monitorGPU && fanControl == "auto") {
+        // 自动风扇必须保留 CPU 作为基础温度源；GPU 可能休眠或暂时无传感器。
+        if (fanControl == "auto") {
           MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.MonitorAutoFanWarning, Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Warning);
           UpdateCheckedState("monitorCPUGroup", monitorCPU ? Strings.MonitorCpuOn : Strings.MonitorCpuOff);
           skipCheckedUpdate = true;
