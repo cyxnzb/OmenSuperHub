@@ -129,6 +129,7 @@ namespace OmenSuperHub {
     const int AutoFanDeadband = 2;       // 200 RPM
     const int AutoFanRiseStep = 3;       // max +300 RPM per second
     const int AutoFanFallStep = 2;       // max -200 RPM per second
+    static bool autoFanSensorFailsafeActive = false;
     static volatile bool tempReady = false;   // 子进程首次输出有效温度后置 true
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
@@ -1487,7 +1488,27 @@ namespace OmenSuperHub {
       if (fanControl != "auto") return;
 
       int targetRpm = GetFanSpeedForTemperature();
-      if (targetRpm < 0) return;
+      if (targetRpm < 0) {
+        bool hadValidTemperature = lastCpuTempSampleUtc != DateTime.MinValue || lastGpuTempSampleUtc != DateTime.MinValue;
+        bool hasFreshTemperature =
+            (monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) ||
+            (monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc));
+
+        // 启动阶段尚未拿到首个样本时不制造满转噪音；一旦曾经正常工作后温度源持续失效，
+        // 则优先安全，交给 BIOS 最大风扇模式，直到有效温度恢复。
+        if (hadValidTemperature && !hasFreshTemperature && !autoFanSensorFailsafeActive) {
+          SetMaxFanSpeedOn();
+          autoFanSensorFailsafeActive = true;
+          Logger.Error("Automatic fan control lost all fresh temperature sources; max-fan failsafe enabled.");
+        }
+        return;
+      }
+
+      if (autoFanSensorFailsafeActive) {
+        SetMaxFanSpeedOff();
+        autoFanSensorFailsafeActive = false;
+        Logger.Info("Automatic fan temperature source recovered; max-fan failsafe disabled.");
+      }
 
       int target = Math.Max(0, Math.Min(255, targetRpm / 100));
       int current;
