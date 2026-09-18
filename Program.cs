@@ -820,10 +820,13 @@ namespace OmenSuperHub {
         flagStart++;
         if (fanControl.Contains("max")) {
           SetMaxFanSpeedOn();
-        } else if (fanControl.Contains(" RPM")) {
+        } else if (TryParseFanRpmSetting(fanControl, out int rpmValue)) {
           SetMaxFanSpeedOff();
-          int rpmValue = int.Parse(fanControl.Replace(" RPM", "").Trim());
           SetFanLevel(rpmValue / 100, rpmValue / 100, Is3FanNb);
+        } else if (fanControl.Contains("RPM")) {
+          fanControl = "auto";
+          SetMaxFanSpeedOff();
+          fanControlTimer?.Change(0, 1000);
         }
       }
 
