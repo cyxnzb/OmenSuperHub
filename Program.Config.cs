@@ -535,6 +535,72 @@ namespace OmenSuperHub {
       return points;
     }
 
+    static FanCurveProfile CreateLegacyGeneratedFanCurveProfile(bool isSilent) {
+      int maxGPUT = maxGPUTemp ?? 87;
+      if (!platformMaxFanSpeed.HasValue || !maxCPUTemp.HasValue)
+        return null;
+
+      int maxRpm = platformMaxFanSpeed.Value;
+      int maxCpu = maxCPUTemp.Value;
+      int delta = maxCpu - maxGPUT;
+
+      List<int> cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList;
+      if (isSilent) {
+        cpuTempList = new List<int> { 30, 60, 87, maxCpu };
+        cpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm - maxRpm / 10 };
+        gpuTempList = new List<int> { 30 - delta, 60 - delta, 87 - delta, maxGPUT };
+        gpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm - maxRpm / 10 };
+      } else {
+        cpuTempList = new List<int> { 45, maxCpu - 5, maxCpu };
+        cpuSpeedList = new List<int> { maxRpm / 4, maxRpm, maxRpm + maxRpm / 10 };
+        gpuTempList = new List<int> { 45 - delta, maxGPUT - 5, maxGPUT };
+        gpuSpeedList = new List<int> { maxRpm / 4, maxRpm, maxRpm + maxRpm / 10 };
+      }
+
+      return new FanCurveProfile(
+          NormalizeDefaultFanCurve(cpuTempList, cpuSpeedList, maxCpu),
+          NormalizeDefaultFanCurve(gpuTempList, gpuSpeedList, maxGPUT));
+    }
+
+    static bool FanCurveMatches(
+        FanCurveProfile profile,
+        IList<int> cpuTemperatures,
+        IList<int> cpuSpeeds,
+        IList<int> gpuTemperatures,
+        IList<int> gpuSpeeds) {
+      if (profile == null) return false;
+
+      return profile.CpuPoints.Select(point => point.Temperature).SequenceEqual(cpuTemperatures) &&
+             profile.CpuPoints.Select(point => point.FanSpeed).SequenceEqual(cpuSpeeds) &&
+             profile.GpuPoints.Select(point => point.Temperature).SequenceEqual(gpuTemperatures) &&
+             profile.GpuPoints.Select(point => point.FanSpeed).SequenceEqual(gpuSpeeds);
+    }
+
+    static bool TryMigrateLegacyGeneratedFanConfig(
+        string absoluteFilePath,
+        List<int> cpuTempList,
+        List<int> cpuSpeedList,
+        List<int> gpuTempList,
+        List<int> gpuSpeedList) {
+      bool isSilent = absoluteFilePath.IndexOf("silent", StringComparison.OrdinalIgnoreCase) >= 0;
+      bool isCool = absoluteFilePath.IndexOf("cool", StringComparison.OrdinalIgnoreCase) >= 0;
+      if (!isSilent && !isCool) return false;
+
+      FanCurveProfile legacyProfile = CreateLegacyGeneratedFanCurveProfile(isSilent);
+      if (!FanCurveMatches(legacyProfile, cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList))
+        return false;
+
+      FanCurveProfile replacement = CreateDefaultFanCurveProfile(isSilent);
+      replacement.Save(absoluteFilePath);
+      LoadFanConfigFromLists(
+          replacement.CpuPoints.Select(point => point.Temperature).ToList(),
+          replacement.CpuPoints.Select(point => point.FanSpeed).ToList(),
+          replacement.GpuPoints.Select(point => point.Temperature).ToList(),
+          replacement.GpuPoints.Select(point => point.FanSpeed).ToList());
+      Logger.Info($"Migrated legacy generated fan curve: {Path.GetFileName(absoluteFilePath)}");
+      return true;
+    }
+
     static void LoadDefaultFanConfig(string filePath) {
       // 只有包含 "silent" 的路径才使用静音模板，否则使用冷静模板（cool / custom 等）
       bool useSilentDefaults = filePath.IndexOf("silent", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -612,6 +678,10 @@ namespace OmenSuperHub {
           return;
         }
 
+        if (TryMigrateLegacyGeneratedFanConfig(
+            absoluteFilePath, cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList))
+          return;
+
         LoadFanConfigFromLists(cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList);
       } else {
         // 旧格式：CPU,Fan1,Fan2,GPU,Fan1,Fan2 多行
@@ -645,6 +715,10 @@ namespace OmenSuperHub {
           LoadDefaultFanConfig(absoluteFilePath);
           return;
         }
+
+        if (TryMigrateLegacyGeneratedFanConfig(
+            absoluteFilePath, cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList))
+          return;
 
         // 将旧格式转换为新格式并覆盖写入
         var newLines = new List<string>
