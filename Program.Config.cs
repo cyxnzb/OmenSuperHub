@@ -686,30 +686,33 @@ namespace OmenSuperHub {
     // 使用平滑后的温度查表，保证高中低档响应速度生效；实时档下平滑温度==原始温度
     // 只有对应监控开启且温度已完成初始化时，才参与风扇转速计算
     static int GetFanSpeedForTemperature() {
-      if (CPUTempFanMap.Count == 0 || GPUTempFanMap.Count == 0) return 0;
+      lock (CPUTempFanMap) {
+        // 曲线缺失时必须停止软件接管，绝不能把“无配置”解释成 0 RPM。
+        if (CPUTempFanMap.Count == 0 || GPUTempFanMap.Count == 0) return -100;
 
-      // 首次获取到真实温度数据前不进行转速控制，fanControlTimer处理-100将直接return
-      int resultSpeed = -100;
+        // 首次获取到真实温度数据前不进行转速控制，fanControlTimer处理-100将直接return
+        int resultSpeed = -100;
 
-      if (tempReady && monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) {
-        int cpuFanSpeed = GetFanSpeedForSpecificTemperature(smoothedCPUTemp, CPUTempFanMap);
-        resultSpeed = Math.Max(resultSpeed, cpuFanSpeed);
+        if (tempReady && monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) {
+          int cpuFanSpeed = GetFanSpeedForSpecificTemperature(smoothedCPUTemp, CPUTempFanMap);
+          resultSpeed = Math.Max(resultSpeed, cpuFanSpeed);
+        }
+
+        if (tempReady && monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)) {
+          int gpuFanSpeed = GetFanSpeedForSpecificTemperature(smoothedGPUTemp, GPUTempFanMap);
+          resultSpeed = Math.Max(resultSpeed, gpuFanSpeed);
+        }
+
+        // 仅在 CPU 温度本身不可用时才使用环境温度兜底。
+        // 不能用 CPUPower==0 判断温度失效，否则空闲/功耗传感器缺失时会覆盖真实 CPU 温度。
+        if (resultSpeed < 0 && monitorCPU && !cpuTempReady && !monitorGPU && isAmbientSensorSupported) {
+          float fittedTemperature = GetFittingTemperature();
+          if (IsPlausibleTemperature(fittedTemperature))
+            resultSpeed = GetFanSpeedForSpecificTemperature(fittedTemperature, CPUTempFanMap);
+        }
+
+        return resultSpeed;
       }
-
-      if (tempReady && monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)) {
-        int gpuFanSpeed = GetFanSpeedForSpecificTemperature(smoothedGPUTemp, GPUTempFanMap);
-        resultSpeed = Math.Max(resultSpeed, gpuFanSpeed);
-      }
-
-      // 仅在 CPU 温度本身不可用时才使用环境温度兜底。
-      // 不能用 CPUPower==0 判断温度失效，否则空闲/功耗传感器缺失时会覆盖真实 CPU 温度。
-      if (resultSpeed < 0 && monitorCPU && !cpuTempReady && !monitorGPU && isAmbientSensorSupported) {
-        float fittedTemperature = GetFittingTemperature();
-        if (IsPlausibleTemperature(fittedTemperature))
-          resultSpeed = GetFanSpeedForSpecificTemperature(fittedTemperature, CPUTempFanMap);
-      }
-
-      return resultSpeed;
     }
 
     static bool IsBuiltInPreset(string presetKey) {
