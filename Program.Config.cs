@@ -339,13 +339,27 @@ namespace OmenSuperHub {
       //Console.WriteLine(regDeleteResult.Output);
     }
 
+    static bool TryParseUnitSetting(string setting, string unit, int minimum, int maximum, out int value) {
+      value = 0;
+      if (string.IsNullOrWhiteSpace(setting) || !setting.EndsWith(unit, StringComparison.OrdinalIgnoreCase))
+        return false;
+
+      string numericPart = setting.Substring(0, setting.Length - unit.Length).Trim();
+      return int.TryParse(numericPart, out value) && value >= minimum && value <= maximum;
+    }
+
+    static bool TryParseFanRpmSetting(string setting, out int rpm) {
+      return TryParseUnitSetting(setting, "RPM", 0, 25500, out rpm);
+    }
+
+    static bool TryParseWattSetting(string setting, int minimum, out int watts) {
+      return TryParseUnitSetting(setting, "W", minimum, 254, out watts);
+    }
+
     static void RestoreCPUPower() {
       // 恢复CPU功耗设定
-      if (cpuPower.Contains(" W")) {
-        int value = int.Parse(cpuPower.Replace(" W", "").Trim());
-        if (isCPUPowerControlSupported && value >= 10 && value <= 254) {
-          SetCpuPowerLimit((byte)value);
-        }
+      if (TryParseWattSetting(cpuPower, 10, out int value) && isCPUPowerControlSupported) {
+        SetCpuPowerLimit((byte)value);
       }
     }
 
@@ -375,11 +389,8 @@ namespace OmenSuperHub {
       System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ => {
         RestoreCPUPower();
         SetGpuPowerState(tgpPower == "on", ppabPower == "on", dState == "normal" ? 1 : 2);
-        if (tppPower.Contains(" W")) {
-          int value = int.Parse(tppPower.Replace(" W", "").Trim());
-          if (value >= 20 && value <= 254) {
-            SetConcurrentTdp((byte)value);
-          }
+        if (TryParseWattSetting(tppPower, 20, out int value)) {
+          SetConcurrentTdp((byte)value);
         }
       });
     }
@@ -393,15 +404,19 @@ namespace OmenSuperHub {
         SetMaxFanSpeedOn();
         fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
         UpdateCheckedState("fanControlGroup", Strings.FanMax);
-      } else if (fanControl.Contains(" RPM")) {
+      } else if (TryParseFanRpmSetting(fanControl, out int rpmValue)) {
         SetMaxFanSpeedOff();
         fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        int rpmValue = int.Parse(fanControl.Replace(" RPM", "").Trim());
         SetFanLevel(rpmValue / 100, rpmValue / 100, Is3FanNb);
         if (fanTrackBar != null) {
-          fanTrackBar.Value = rpmValue / 100;
+          fanTrackBar.Value = Math.Max(fanTrackBar.Minimum, Math.Min(fanTrackBar.Maximum, rpmValue / 100));
         }
         UpdateCheckedState("fanControlGroup", Strings.SetFanSpeedSlider);
+      } else {
+        fanControl = "auto";
+        SetMaxFanSpeedOff();
+        fanControlTimer.Change(0, 1000);
+        UpdateCheckedState("fanControlGroup", Strings.FanAuto);
       }
     }
 
@@ -1127,13 +1142,18 @@ namespace OmenSuperHub {
         SetMaxFanSpeedOn();
         fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
         UpdateCheckedState("fanControlGroup", Strings.FanMax);
-      } else if (fanControl.Contains(" RPM")) {
+      } else if (TryParseFanRpmSetting(fanControl, out int rpmValue)) {
         SetMaxFanSpeedOff();
         fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
-        int rpmValue = int.Parse(fanControl.Replace(" RPM", "").Trim());
         SetFanLevel(rpmValue / 100, rpmValue / 100, Is3FanNb);
-        if (fanTrackBar != null) fanTrackBar.Value = rpmValue / 100;
+        if (fanTrackBar != null)
+          fanTrackBar.Value = Math.Max(fanTrackBar.Minimum, Math.Min(fanTrackBar.Maximum, rpmValue / 100));
         UpdateCheckedState("fanControlGroup", Strings.SetFanSpeedSlider);
+      } else {
+        fanControl = "auto";
+        SetMaxFanSpeedOff();
+        fanControlTimer.Change(0, 1000);
+        UpdateCheckedState("fanControlGroup", Strings.FanAuto);
       }
 
       // 风扇响应速度
@@ -1152,13 +1172,11 @@ namespace OmenSuperHub {
           SetCpuPowerLimit(254);
           if (cpuPowerTrackBar != null) cpuPowerTrackBar.Value = 254;
           UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
-        } else if (cpuPower.Contains(" W")) {
-          int value = int.Parse(cpuPower.Replace(" W", "").Trim());
-          if (value >= 5 && value <= 254) {
-            SetCpuPowerLimit((byte)value);
-            if (cpuPowerTrackBar != null) cpuPowerTrackBar.Value = value;
-            UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
-          }
+        } else if (TryParseWattSetting(cpuPower, 5, out int value)) {
+          SetCpuPowerLimit((byte)value);
+          if (cpuPowerTrackBar != null)
+            cpuPowerTrackBar.Value = Math.Max(cpuPowerTrackBar.Minimum, Math.Min(cpuPowerTrackBar.Maximum, value));
+          UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
         }
       }
 
