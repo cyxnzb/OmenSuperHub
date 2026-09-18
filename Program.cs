@@ -100,8 +100,8 @@ namespace OmenSuperHub {
     static int textSize = 40;
     static int countRestore = 0, gpuClock = 0, gpuCoreOverclock = -1, gpuMemoryOverclock = -1, maxFrameRate = -1, graphicsBoostClock = 0;
     static int alreadyRead = 0, alreadyReadCode = 1000;
-    static readonly string[] PresetOrder = { "PresetExtreme", "PresetGpuPriority", "PresetLightUse", "PresetCustom1", "PresetCustom2", "PresetCustom3" };
-    static string currentPreset = "PresetCustom1", presetCustom1Name = Strings.PresetCustom1, presetCustom2Name = Strings.PresetCustom2, presetCustom3Name = Strings.PresetCustom3;
+    static readonly string[] PresetOrder = { "PresetBalanced", "PresetExtreme", "PresetGpuPriority", "PresetLightUse", "PresetCustom1", "PresetCustom2", "PresetCustom3" };
+    static string currentPreset = "PresetBalanced", presetCustom1Name = Strings.PresetCustom1, presetCustom2Name = Strings.PresetCustom2, presetCustom3Name = Strings.PresetCustom3;
     static string fanTable = "cool", fanControl = "auto", tempSensitivity = "high", tppPower = "null", iccMax = "null", acLoadline = "null", cpuPower = "null", tgpPower = "on", ppabPower = "on", dState = "normal", autoStart = "off", customIcon = "original", floatingBar = "off", floatingBarLoc = "left", floatingBarScreen = "", omenKey = OmenKeyActions.Default, omenKeyAppPath = "", omenKeyAppName = "", omenKeyShortcut = "", omenKeyPresetCandidates = "", dataLocalize = "off", appLanguage = "zh-CN", autoFanProtect = "on";
     static volatile bool monitorFan = false;
     static bool skipCheckedUpdate = false; // action 内拦截时置 true，阻止 CreateMenuItem 覆盖勾选
@@ -236,7 +236,7 @@ namespace OmenSuperHub {
           //Console.WriteLine($"1.2: {sw.ElapsedMilliseconds}ms");
 
           if (platformSettings != null) {
-            currentPreset = "PresetExtreme";
+            currentPreset = "PresetBalanced";
             isCPUPowerControlSupported = true;
           }
           //isCPUPowerControlSupported = IsPowerControlSupported(deviceType); // 似乎不准确
@@ -257,7 +257,8 @@ namespace OmenSuperHub {
         var t4 = Task.Run(() => kbType = GetKeyboardType());
         var t5 = Task.Run(() => NvGraphicsMode = GetGfxMode());
         var t6 = Task.Run(() => {
-          SetUnleashMode(); // 固定为释放全部性能模式
+          // 启动阶段只探测能力。实际性能模式由 RestoreConfig/当前预设统一应用，
+          // 避免应用一启动就无条件切到 Unleash。
           Is3FanNb = IsThreeFanSupported();
         });
         var t7 = Task.Run(() => {
@@ -1520,6 +1521,7 @@ namespace OmenSuperHub {
 
     static string GetPresetDisplayName(string presetKey) {
       switch (presetKey) {
+        case "PresetBalanced": return Strings.PresetBalanced;
         case "PresetExtreme": return Strings.PresetExtreme;
         case "PresetGpuPriority": return Strings.PresetGpuPriority;
         case "PresetLightUse": return Strings.PresetLightUse;
