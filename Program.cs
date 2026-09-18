@@ -309,7 +309,11 @@ namespace OmenSuperHub {
 
         // Main loop to query CPU and GPU temperature every second
         fanControlTimer = new System.Threading.Timer((e) => {
-          ApplyAutomaticFanControl();
+          try {
+            ApplyAutomaticFanControl();
+          } catch (Exception ex) {
+            Logger.Error($"Automatic fan control failed: {ex.Message}");
+          }
         }, null, 100, 1000);
 
         checkFloatingTimer = new System.Windows.Forms.Timer();
