@@ -121,6 +121,7 @@ namespace OmenSuperHub {
     static bool rawGotGPU = false;
     static DateTime lastCpuTempSampleUtc = DateTime.MinValue, lastGpuTempSampleUtc = DateTime.MinValue;
     static DateTime lastCpuPowerSampleUtc = DateTime.MinValue, lastGpuPowerSampleUtc = DateTime.MinValue;
+    static DateTime lastCpuSmoothedSampleUtc = DateTime.MinValue, lastGpuSmoothedSampleUtc = DateTime.MinValue;
     static readonly TimeSpan hardwareSampleTimeout = TimeSpan.FromSeconds(5);
     static readonly object deferredHardwareApplyLock = new object();
     static readonly Dictionary<string, int> deferredHardwareApplyVersions = new Dictionary<string, int>();
@@ -768,6 +769,8 @@ namespace OmenSuperHub {
         gpuTempReady = false;
         rawGotGPU = false;
         tempReady = false;
+        lastCpuSmoothedSampleUtc = DateTime.MinValue;
+        lastGpuSmoothedSampleUtc = DateTime.MinValue;
         //Logger.Info("StartHardwareMonitor [HWMonitor] 进程退出，准备重启...");
         System.Threading.Tasks.Task.Delay(3000).ContinueWith(_ => {
           try { StartHardwareMonitor(); } catch { }
@@ -1261,6 +1264,23 @@ namespace OmenSuperHub {
     static float smoothedCPUTemp = 50f;
     static float smoothedGPUTemp = 40f;
 
+    static float SmoothTemperatureSample(float rawValue, float previousValue, float response,
+                                         DateTime sampleUtc, ref DateTime lastSmoothedSampleUtc) {
+      if (sampleUtc == DateTime.MinValue || sampleUtc <= lastSmoothedSampleUtc)
+        return previousValue;
+
+      if (lastSmoothedSampleUtc == DateTime.MinValue || response >= 0.999f) {
+        lastSmoothedSampleUtc = sampleUtc;
+        return rawValue;
+      }
+
+      double elapsedSeconds = Math.Max(0.05, Math.Min(5.0, (sampleUtc - lastSmoothedSampleUtc).TotalSeconds));
+      double baseRetention = Math.Max(0.0, Math.Min(0.999999, 1.0 - response));
+      float alpha = (float)(1.0 - Math.Pow(baseRetention, elapsedSeconds));
+      lastSmoothedSampleUtc = sampleUtc;
+      return rawValue * alpha + previousValue * (1.0f - alpha);
+    }
+
     static void QueryHardware() {
       // 防止定时器重入：上次查询未完成时直接跳过本次
       if (Interlocked.CompareExchange(ref _isQuerying, 1, 0) != 0)
@@ -1288,12 +1308,15 @@ namespace OmenSuperHub {
         }
       }
 
-      // 每次调用都直接平滑（不再做1s均值），风扇响应速度由respondSpeed本身控制
+      // 只在拿到新的温度样本时平滑，并按真实采样间隔换算 alpha。
+      // 这样 250ms / 1s 刷新率不会改变“高/中/低响应”的实际热响应速度。
       if (monitorCPU && cpuTempReady) {
-        smoothedCPUTemp = tempCPU * respondSpeed + smoothedCPUTemp * (1.0f - respondSpeed);
+        smoothedCPUTemp = SmoothTemperatureSample(
+            tempCPU, smoothedCPUTemp, respondSpeed, lastCpuTempSampleUtc, ref lastCpuSmoothedSampleUtc);
       }
       if (monitorGPU && gpuTempReady) {
-        smoothedGPUTemp = rawTempGPU * respondSpeed + smoothedGPUTemp * (1.0f - respondSpeed);
+        smoothedGPUTemp = SmoothTemperatureSample(
+            rawTempGPU, smoothedGPUTemp, respondSpeed, lastGpuTempSampleUtc, ref lastGpuSmoothedSampleUtc);
       }
 
       // 根据显示方式决定展示原始值或平滑值
@@ -1305,9 +1328,9 @@ namespace OmenSuperHub {
       int currentMaxCPUTemp = maxCPUTemp ?? 97;
       int currentMaxGPUTemp = maxGPUTemp ?? 87;
       bool cpuProtectionTriggered = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc) &&
-                                    smoothedCPUTemp > currentMaxCPUTemp - 2;
+                                    rawTempCPU > currentMaxCPUTemp - 2;
       bool gpuProtectionTriggered = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc) &&
-                                    smoothedGPUTemp > currentMaxGPUTemp - 2;
+                                    rawTempGPU > currentMaxGPUTemp - 2;
       if (autoFanProtect == "on" && platformMaxFanSpeed.HasValue &&
           (cpuProtectionTriggered || gpuProtectionTriggered) && fanControl.Contains(" RPM")) {
         // 检查是否满足转速低于平台最大转速80%的条件
@@ -1333,7 +1356,7 @@ namespace OmenSuperHub {
           SaveConfig("FanControl");
 
           int protectionLimit = gpuProtectionTriggered ? currentMaxGPUTemp : currentMaxCPUTemp;
-          float protectionTemp = gpuProtectionTriggered ? smoothedGPUTemp : smoothedCPUTemp;
+          float protectionTemp = gpuProtectionTriggered ? rawTempGPU : rawTempCPU;
           trayIcon.BalloonTipTitle = Strings.HighTempBalloonTitle;
           trayIcon.BalloonTipText = Strings.HighTempBalloonText(protectionLimit, protectionTemp);
           trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
@@ -1440,8 +1463,8 @@ namespace OmenSuperHub {
     static bool IsEmergencyThermalState() {
       int cpuLimit = maxCPUTemp ?? 97;
       int gpuLimit = maxGPUTemp ?? 87;
-      bool cpuHot = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc) && smoothedCPUTemp >= cpuLimit - 3;
-      bool gpuHot = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc) && smoothedGPUTemp >= gpuLimit - 3;
+      bool cpuHot = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc) && rawTempCPU >= cpuLimit - 3;
+      bool gpuHot = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc) && rawTempGPU >= gpuLimit - 3;
       return cpuHot || gpuHot;
     }
 
