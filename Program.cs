@@ -692,8 +692,9 @@ namespace OmenSuperHub {
 
           bool cpuTempValid = float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float tc) && IsPlausibleTemperature(tc);
           bool cpuPowerValid = float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float pc) && IsPlausiblePower(pc);
+          float tg = 0f;
           bool gpuTempValid = parts[4] == "1" &&
-              float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float tg) && IsPlausibleTemperature(tg);
+              float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out tg) && IsPlausibleTemperature(tg);
           bool gpuPowerValid = float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float pg) && IsPlausiblePower(pg);
 
           if (cpuTempValid) {
