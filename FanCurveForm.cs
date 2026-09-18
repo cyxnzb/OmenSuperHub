@@ -496,7 +496,8 @@ namespace OmenSuperHub {
 
     private void ValidatePointsForMachine(IList<FanCurvePoint> points, int temperatureMaximum) {
       if (points.Count < 2 ||
-          points.Any(point => point.FanSpeed < 0) ||
+          points.Any(point => point.Temperature < 0 || point.Temperature > temperatureMaximum ||
+                              point.FanSpeed < 0 || point.FanSpeed > fanSpeedMaximum) ||
           points.GroupBy(point => point.Temperature).Any(group => group.Count() > 1)) {
         throw new InvalidDataException(Strings.FanCurveOutOfRange);
       }
