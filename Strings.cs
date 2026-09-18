@@ -94,9 +94,9 @@
         "Recommended for daily use. Keeps platform-default power behavior, automatic fan control, and no extra overclock."
     );
     public static string PresetExtremeTooltip => T(
-        "完全释放性能，甚至可以尝试继续调高CPU功率。",
-        "完全釋放效能，甚至可以嘗試繼續調高CPU功率。",
-        "Unleash full performance—you can even try further increasing the CPU power."
+        "使用平台性能模式与平台允许的高功耗上限，不自动额外超频。",
+        "使用平台效能模式與平台允許的高功耗上限，不自動額外超頻。",
+        "Uses the platform performance mode and supported high power limits without applying extra overclock automatically."
     );
     public static string PresetGpuPriorityTooltip => T(
         "散热不足的情况下优先保证GPU性能，适当降低CPU功耗。",
