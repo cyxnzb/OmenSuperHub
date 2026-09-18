@@ -349,8 +349,29 @@ namespace OmenSuperHub {
       }
     }
 
+    static void ApplyPresetFirmwareMode(string presetKey) {
+      if (platformSettings == null) return;
+
+      try {
+        switch (presetKey) {
+          case "PresetExtreme":
+          case "PresetGpuPriority":
+            SetPerformanceMode();
+            break;
+          case "PresetLightUse":
+            SetEcoPerformanceMode();
+            break;
+          default:
+            SetDefaultPerformanceMode();
+            break;
+        }
+      } catch (Exception ex) {
+        Logger.Error($"ApplyPresetFirmwareMode({presetKey}): {ex.Message}");
+      }
+    }
+
     static void RestorePowerConfig() {
-      SetUnleashMode();
+      ApplyPresetFirmwareMode(currentPreset);
       System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ => {
         RestoreCPUPower();
         SetGpuPowerState(tgpPower == "on", ppabPower == "on", dState == "normal" ? 1 : 2);
@@ -677,7 +698,8 @@ namespace OmenSuperHub {
     }
 
     static bool IsBuiltInPreset(string presetKey) {
-      return presetKey == "PresetExtreme" || presetKey == "PresetGpuPriority" || presetKey == "PresetLightUse";
+      return presetKey == "PresetBalanced" || presetKey == "PresetExtreme" ||
+             presetKey == "PresetGpuPriority" || presetKey == "PresetLightUse";
     }
 
     static bool IsMonitorMetricConfig(string configName) {
@@ -909,7 +931,7 @@ namespace OmenSuperHub {
     /// </summary>
     static void LoadPresetFields(string presetKey) {
       try {
-        if (presetKey == "PresetExtreme" || presetKey == "PresetGpuPriority" || presetKey == "PresetLightUse") {
+        if (IsBuiltInPreset(presetKey)) {
           using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\OmenSuperHub")) {
             if (key == null) return;
             fanTable = (string)key.GetValue("FanTable", fanTable);
@@ -1015,6 +1037,9 @@ namespace OmenSuperHub {
     /// 不读写注册表，可以在启动恢复和运行时切换预设时复用。
     /// </summary>
     static void ApplyPresetSettings(string presetKey) {
+      string effectivePreset = presetKey == "Restore" ? currentPreset : presetKey;
+      ApplyPresetFirmwareMode(effectivePreset);
+
       // 自定义预设特有字段：监控项、温度显示模式等
       if (presetKey == "Restore" || presetKey == "PresetCustom1" || presetKey == "PresetCustom2" || presetKey == "PresetCustom3") {
         if (presetKey == "Restore") {
@@ -1023,7 +1048,7 @@ namespace OmenSuperHub {
               // Restore时已经判断过key
               if (key != null) {
                 // 硬件监控：内置预设从主键读取，自定义预设已由 LoadPresetFields 覆盖
-                if (currentPreset == "PresetExtreme" || currentPreset == "PresetGpuPriority" || currentPreset == "PresetLightUse") {
+                if (IsBuiltInPreset(currentPreset)) {
                   monitorCPU = Convert.ToBoolean(key.GetValue("MonitorCPU", true));
                   if (hasNVIDIAGpu)
                     monitorGPU = Convert.ToBoolean(key.GetValue("MonitorGPU", true));
@@ -1156,6 +1181,7 @@ namespace OmenSuperHub {
         }
 
         if (gpuCoreOverclock < 0) {
+          System.Threading.Tasks.Task.Run(() => SetCoreClockOffset(0));
           UpdateCheckedState("gpuCoreOverclockGroup", Strings.NotSet);
         } else {
           System.Threading.Tasks.Task.Run(() => SetCoreClockOffset(gpuCoreOverclock));
@@ -1163,6 +1189,7 @@ namespace OmenSuperHub {
         }
 
         if (gpuMemoryOverclock < 0) {
+          System.Threading.Tasks.Task.Run(() => SetMemoryClockOffset(0));
           UpdateCheckedState("gpuMemoryOverclockGroup", Strings.NotSet);
         } else {
           System.Threading.Tasks.Task.Run(() => SetMemoryClockOffset(gpuMemoryOverclock));
@@ -1229,6 +1256,55 @@ namespace OmenSuperHub {
       });
     }
 
+    static void ConfigureBuiltInPresetDefaults(string presetKey) {
+      int targetPL1Perf = (platformSettings?.NbPL1UpperBoundPerformance > 0) ? platformSettings.NbPL1UpperBoundPerformance : 160;
+      int targetPL1Default = (platformSettings?.NbPL1UpperBoundDefault > 0) ? platformSettings.NbPL1UpperBoundDefault : 55;
+      int defaultTpp = GetDefaultConcurrentTdp();
+      string defaultTppSetting = (defaultTpp >= 20 && defaultTpp <= 254) ? $"{defaultTpp} W" : "null";
+
+      // Balanced 是安全基线：平台默认功耗、自动风扇、不附加超频。
+      fanTable = "cool";
+      fanControl = "auto";
+      tempSensitivity = "medium";
+      cpuPower = $"{targetPL1Default} W";
+      tppPower = defaultTppSetting;
+      tgpPower = "on";
+      ppabPower = "on";
+      dState = "normal";
+      gpuCoreOverclock = -1;
+      gpuMemoryOverclock = -1;
+      gpuClock = 0;
+      maxFrameRate = 0;
+      iccMax = "null";
+      acLoadline = "null";
+
+      switch (presetKey) {
+        case "PresetExtreme":
+          tempSensitivity = "high";
+          cpuPower = $"{targetPL1Perf} W";
+          tppPower = $"{targetPL1Perf} W";
+          gpuCoreOverclock = 120;
+          gpuMemoryOverclock = 400;
+          break;
+        case "PresetGpuPriority":
+          tempSensitivity = "high";
+          cpuPower = $"{targetPL1Default} W";
+          tppPower = $"{targetPL1Perf} W";
+          gpuCoreOverclock = 120;
+          gpuMemoryOverclock = 0;
+          break;
+        case "PresetLightUse":
+          fanTable = "silent";
+          tempSensitivity = "low";
+          cpuPower = $"{Math.Max(10, (int)(targetPL1Default * 0.6))} W";
+          tppPower = defaultTppSetting;
+          tgpPower = "off";
+          ppabPower = "off";
+          maxFrameRate = 60;
+          break;
+      }
+    }
+
     /// <summary>
     /// 切换预设时调用。设置内置预设的默认字段值（或从注册表读取自定义预设），
     /// 保存到注册表，然后应用到硬件。
@@ -1236,35 +1312,8 @@ namespace OmenSuperHub {
     static void applyPresetLogic(string targetPreset) {
       currentPreset = targetPreset;
 
-      if (targetPreset == "PresetExtreme" || targetPreset == "PresetGpuPriority" || targetPreset == "PresetLightUse") {
-        // 内置预设：先写入默认值，再走通用保存路径
-        int targetPL1Perf = (platformSettings?.NbPL1UpperBoundPerformance > 0) ? platformSettings.NbPL1UpperBoundPerformance : 160;
-        int targetPL1Default = (platformSettings?.NbPL1UpperBoundDefault > 0) ? platformSettings.NbPL1UpperBoundDefault : 55;
-
-        fanTable = "cool"; fanControl = "auto"; tempSensitivity = "high";
-        tgpPower = "on"; ppabPower = "on"; dState = "normal";
-        gpuCoreOverclock = 120; gpuMemoryOverclock = targetPreset == "PresetExtreme" ? 400 : 0;
-        gpuClock = 0; iccMax = "null"; acLoadline = "null";
-
-        switch (targetPreset) {
-          case "PresetExtreme":
-            cpuPower = $"{targetPL1Perf} W";
-            tppPower = $"{targetPL1Perf} W";
-            maxFrameRate = 0;
-            break;
-          case "PresetGpuPriority":
-            cpuPower = $"{targetPL1Default} W";
-            tppPower = $"{targetPL1Perf} W";
-            maxFrameRate = 0;
-            break;
-          case "PresetLightUse":
-            fanTable = "silent";
-            cpuPower = $"{(int)(targetPL1Default * 0.6)} W";
-            tppPower = "null";
-            tgpPower = "off"; ppabPower = "off";
-            maxFrameRate = 60;
-            break;
-        }
+      if (IsBuiltInPreset(targetPreset)) {
+        ConfigureBuiltInPresetDefaults(targetPreset);
       } else {
         // 自定义预设：从注册表读取
         LoadPresetFields(targetPreset);
@@ -1293,12 +1342,12 @@ namespace OmenSuperHub {
         using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\OmenSuperHub")) {
           if (key == null) {
             // 全新安装，无注册表键：应用默认预设
-            applyPresetLogic(platformSettings != null ? "PresetExtreme" : "PresetCustom1");
+            applyPresetLogic(platformSettings != null ? "PresetBalanced" : "PresetCustom1");
             return;
           }
 
           // ── 预设字段 ─────────────────────────────────────────────────────────
-          currentPreset = (string)key.GetValue("CurrentPreset", platformSettings != null ? "PresetExtreme" : "PresetCustom1");
+          currentPreset = (string)key.GetValue("CurrentPreset", platformSettings != null ? "PresetBalanced" : "PresetCustom1");
           presetCustom1Name = (string)key.GetValue("PresetCustom1Name", Strings.PresetCustom1);
           presetCustom2Name = (string)key.GetValue("PresetCustom2Name", Strings.PresetCustom2);
           presetCustom3Name = (string)key.GetValue("PresetCustom3Name", Strings.PresetCustom3);
@@ -1312,26 +1361,8 @@ namespace OmenSuperHub {
 
           // 内置预设：先按预设逻辑写入默认字段，再用注册表已保存的值覆盖
           // 自定义预设：直接从子键读取
-          if (currentPreset == "PresetExtreme" || currentPreset == "PresetGpuPriority" || currentPreset == "PresetLightUse") {
-            int targetPL1Perf = (platformSettings?.NbPL1UpperBoundPerformance > 0) ? platformSettings.NbPL1UpperBoundPerformance : 160;
-            int targetPL1Default = (platformSettings?.NbPL1UpperBoundDefault > 0) ? platformSettings.NbPL1UpperBoundDefault : 55;
-            fanTable = "cool"; fanControl = "auto"; tempSensitivity = "high";
-            tgpPower = "on"; ppabPower = "on"; dState = "normal";
-            gpuCoreOverclock = 120; gpuMemoryOverclock = currentPreset == "PresetExtreme" ? 400 : 0;
-            gpuClock = 0; iccMax = "null"; acLoadline = "null";
-            switch (currentPreset) {
-              case "PresetExtreme":
-                cpuPower = $"{targetPL1Perf} W"; tppPower = $"{targetPL1Perf} W"; maxFrameRate = 0;
-                break;
-              case "PresetGpuPriority":
-                cpuPower = $"{targetPL1Default} W"; tppPower = $"{targetPL1Perf} W"; maxFrameRate = 0;
-                break;
-              case "PresetLightUse":
-                fanTable = "silent";
-                cpuPower = $"{(int)(targetPL1Default * 0.6)} W"; tppPower = "null";
-                tgpPower = "off"; ppabPower = "off"; maxFrameRate = 60;
-                break;
-            }
+          if (IsBuiltInPreset(currentPreset)) {
+            ConfigureBuiltInPresetDefaults(currentPreset);
             // 用注册表中已保存的值覆盖（上次修改过的字段会被保留）
             fanTable = (string)key.GetValue("FanTable", fanTable);
             fanControl = (string)key.GetValue("FanControl", fanControl);
@@ -1450,7 +1481,7 @@ namespace OmenSuperHub {
     /// 内置预设不需要单独子键，直接跳过。
     /// </summary>
     static void SavePresetToRegistry(string presetKey) {
-      if (presetKey == "PresetExtreme" || presetKey == "PresetGpuPriority" || presetKey == "PresetLightUse") return;
+      if (IsBuiltInPreset(presetKey)) return;
       try {
         using (RegistryKey key = Registry.CurrentUser.CreateSubKey($@"Software\OmenSuperHub\{presetKey}")) {
           if (key == null) return;
