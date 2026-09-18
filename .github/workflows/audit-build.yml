@@ -9,7 +9,7 @@ on:
       - master
 
 concurrency:
-  group: audit-build-${{ github.ref }}
+  group: audit-build-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
