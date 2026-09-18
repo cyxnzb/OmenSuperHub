@@ -95,6 +95,16 @@ namespace OmenSuperHub {
       return data[0] | (data[1] << 8);
     }
 
+    // SystemDesignData[8] 对应平台默认 Concurrent TDP。
+    // 返回 -1 表示当前平台/BIOS未提供可靠默认值。
+    public static int GetDefaultConcurrentTdp() {
+      byte[] data = GetSystemDesignData();
+      if (data == null || data.Length <= 8 || data[8] == 0) {
+        return -1;
+      }
+      return data[8];
+    }
+
     // 解析并输出 SystemDesignData (128字节) 的关键比特位含义
     public static void PrintSystemDesignData() {
       byte[] data = GetSystemDesignData();
