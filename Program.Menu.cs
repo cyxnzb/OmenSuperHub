@@ -643,23 +643,28 @@ namespace OmenSuperHub {
         // 显示当前值的只读标签
         cpuPowerValueLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{cpuPowerTrackBar.Value} W")) { Enabled = false };
 
-        // 滑块值改变时更新标签并应用设置
+        // 滚轮/拖动只保留最后一次值，避免连续写 BIOS。
         cpuPowerTrackBar.ValueChanged += (sender, e) => {
           int val = cpuPowerTrackBar.Value;
           cpuPowerValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} W");
-          cpuPower = cpuPowerTrackBar.Value + " W";
-          if (isCPUPowerControlSupported)
-            SetCpuPowerLimit((byte)cpuPowerTrackBar.Value);
-          SaveConfig("CpuPower");
+          cpuPower = val + " W";
+          ScheduleLatestHardwareApply("cpuPower", () => {
+            if (isCPUPowerControlSupported)
+              SetCpuPowerLimit((byte)val);
+            SaveConfig("CpuPower");
+          });
           UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
         };
 
-        // 鼠标松开
+        // 鼠标松开时立即提交最终值，并使之前排队的值失效。
         cpuPowerTrackBar.MouseUp += (sender, e) => {
-          cpuPower = cpuPowerTrackBar.Value + " W";
-          if (isCPUPowerControlSupported)
-            SetCpuPowerLimit((byte)cpuPowerTrackBar.Value);
-          SaveConfig("CpuPower");
+          int val = cpuPowerTrackBar.Value;
+          cpuPower = val + " W";
+          ApplyHardwareSettingNow("cpuPower", () => {
+            if (isCPUPowerControlSupported)
+              SetCpuPowerLimit((byte)val);
+            SaveConfig("CpuPower");
+          });
           UpdateCheckedState("cpuPowerGroup", Strings.SetCpuPowerSlider);
         };
 
@@ -719,17 +724,23 @@ namespace OmenSuperHub {
         tppValueLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{tppTrackBar.Value} W")) { Enabled = false };
 
         tppTrackBar.ValueChanged += (sender, e) => {
-          tppValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{tppTrackBar.Value} W");
-          tppPower = tppTrackBar.Value + " W";
-          SetConcurrentTdp((byte)tppTrackBar.Value);
-          SaveConfig("TppPower");
+          int val = tppTrackBar.Value;
+          tppValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} W");
+          tppPower = val + " W";
+          ScheduleLatestHardwareApply("tppPower", () => {
+            SetConcurrentTdp((byte)val);
+            SaveConfig("TppPower");
+          });
           UpdateCheckedState("tppPowerGroup", Strings.SetTppSlider);
         };
 
         tppTrackBar.MouseUp += (sender, e) => {
-          tppPower = tppTrackBar.Value + " W";
-          SetConcurrentTdp((byte)tppTrackBar.Value);
-          SaveConfig("TppPower");
+          int val = tppTrackBar.Value;
+          tppPower = val + " W";
+          ApplyHardwareSettingNow("tppPower", () => {
+            SetConcurrentTdp((byte)val);
+            SaveConfig("TppPower");
+          });
           UpdateCheckedState("tppPowerGroup", Strings.SetTppSlider);
         };
 
@@ -758,8 +769,10 @@ namespace OmenSuperHub {
         ToolStripMenuItem gpuCoreOverclockMenu = new ToolStripMenuItem(Strings.GpuCoreOverclock);
         gpuCoreOverclockMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "gpuCoreOverclockGroup", (s, e) => {
           gpuCoreOverclock = -1;
-          Task.Run(() => SetCoreClockOffset(0));
-          SaveConfig("GpuCoreOverclock");
+          ApplyHardwareSettingNow("gpuCoreOverclock", () => {
+            SetCoreClockOffset(0);
+            SaveConfig("GpuCoreOverclock");
+          });
         }, true));
         gpuCoreOverclockMenu.DropDownItems.Add(CreateMenuItem(Strings.SetGpuCoreOverclockSlider, "gpuCoreOverclockGroup", (s, e) => { }, false));
         gpuCoreOverclockTrackBar = new ToolStripTrackBar();
@@ -772,15 +785,20 @@ namespace OmenSuperHub {
         gpuCoreOverclockTrackBar.ValueChanged += (sender, e) => {
           int val = gpuCoreOverclockTrackBar.Value * 15;
           gpuCoreOverclockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} MHz");
-          gpuCoreOverclock = gpuCoreOverclockTrackBar.Value * 15;
-          Task.Run(() => SetCoreClockOffset(gpuCoreOverclock));
-          SaveConfig("GpuCoreOverclock");
+          gpuCoreOverclock = val;
+          ScheduleLatestHardwareApply("gpuCoreOverclock", () => {
+            SetCoreClockOffset(val);
+            SaveConfig("GpuCoreOverclock");
+          });
           UpdateCheckedState("gpuCoreOverclockGroup", Strings.SetGpuCoreOverclockSlider);
         };
         gpuCoreOverclockTrackBar.MouseUp += (sender, e) => {
-          gpuCoreOverclock = gpuCoreOverclockTrackBar.Value * 15;
-          Task.Run(() => SetCoreClockOffset(gpuCoreOverclock));
-          SaveConfig("GpuCoreOverclock");
+          int val = gpuCoreOverclockTrackBar.Value * 15;
+          gpuCoreOverclock = val;
+          ApplyHardwareSettingNow("gpuCoreOverclock", () => {
+            SetCoreClockOffset(val);
+            SaveConfig("GpuCoreOverclock");
+          });
           UpdateCheckedState("gpuCoreOverclockGroup", Strings.SetGpuCoreOverclockSlider);
         };
         gpuCoreOverclockMenu.DropDownItems.Add(gpuCoreOverclockTrackBar);
@@ -790,8 +808,10 @@ namespace OmenSuperHub {
         ToolStripMenuItem gpuMemoryOverclockMenu = new ToolStripMenuItem(Strings.GpuMemoryOverclock);
         gpuMemoryOverclockMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "gpuMemoryOverclockGroup", (s, e) => {
           gpuMemoryOverclock = -1;
-          Task.Run(() => SetMemoryClockOffset(0));
-          SaveConfig("GpuMemoryOverclock");
+          ApplyHardwareSettingNow("gpuMemoryOverclock", () => {
+            SetMemoryClockOffset(0);
+            SaveConfig("GpuMemoryOverclock");
+          });
         }, true));
         gpuMemoryOverclockMenu.DropDownItems.Add(CreateMenuItem(Strings.SetGpuMemoryOverclockSlider, "gpuMemoryOverclockGroup", (s, e) => { }, false));
         gpuMemoryOverclockTrackBar = new ToolStripTrackBar();
@@ -804,15 +824,20 @@ namespace OmenSuperHub {
         gpuMemoryOverclockTrackBar.ValueChanged += (sender, e) => {
           int val = gpuMemoryOverclockTrackBar.Value * 100;
           gpuMemoryOverclockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} MHz");
-          gpuMemoryOverclock = gpuMemoryOverclockTrackBar.Value * 100;
-          Task.Run(() => SetMemoryClockOffset(gpuMemoryOverclock));
-          SaveConfig("GpuMemoryOverclock");
+          gpuMemoryOverclock = val;
+          ScheduleLatestHardwareApply("gpuMemoryOverclock", () => {
+            SetMemoryClockOffset(val);
+            SaveConfig("GpuMemoryOverclock");
+          });
           UpdateCheckedState("gpuMemoryOverclockGroup", Strings.SetGpuMemoryOverclockSlider);
         };
         gpuMemoryOverclockTrackBar.MouseUp += (sender, e) => {
-          gpuMemoryOverclock = gpuMemoryOverclockTrackBar.Value * 100;
-          Task.Run(() => SetMemoryClockOffset(gpuMemoryOverclock));
-          SaveConfig("GpuMemoryOverclock");
+          int val = gpuMemoryOverclockTrackBar.Value * 100;
+          gpuMemoryOverclock = val;
+          ApplyHardwareSettingNow("gpuMemoryOverclock", () => {
+            SetMemoryClockOffset(val);
+            SaveConfig("GpuMemoryOverclock");
+          });
           UpdateCheckedState("gpuMemoryOverclockGroup", Strings.SetGpuMemoryOverclockSlider);
         };
         gpuMemoryOverclockMenu.DropDownItems.Add(gpuMemoryOverclockTrackBar);
@@ -823,8 +848,10 @@ namespace OmenSuperHub {
         gpuClockMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.GraphicsBoostClockTip(graphicsBoostClock)) { Enabled = false });
         gpuClockMenu.DropDownItems.Add(CreateMenuItem(Strings.Unlimited, "gpuClockGroup", (s, e) => {
           gpuClock = 0;
-          Task.Run(() => SetGPUClockReset());
-          SaveConfig("GpuClock");
+          ApplyHardwareSettingNow("gpuClock", () => {
+            SetGPUClockReset();
+            SaveConfig("GpuClock");
+          });
         }, true));
         gpuClockMenu.DropDownItems.Add(CreateMenuItem(Strings.SetGpuClockSlider, "gpuClockGroup", (s, e) => { }, false));
         gpuClockTrackBar = new ToolStripTrackBar();
@@ -836,25 +863,24 @@ namespace OmenSuperHub {
 
         gpuClockValueLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{gpuClockTrackBar.Value * 10} MHz")) { Enabled = false };
 
-        gpuClockTrackBar.MouseDown += (sender, e) => {
-          gpuClock = gpuClockTrackBar.Value * 10;
-          Task.Run(() => SetGPUClockLimit(gpuClock));
-          SaveConfig("GpuClock");
-          UpdateCheckedState("gpuClockGroup", Strings.SetGpuClockSlider);
-        };
-
         gpuClockTrackBar.ValueChanged += (sender, e) => {
-          gpuClock = gpuClockTrackBar.Value * 10;
-          Task.Run(() => SetGPUClockLimit(gpuClock));
-          gpuClockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{gpuClockTrackBar.Value * 10} MHz");
-          SaveConfig("GpuClock");
+          int val = gpuClockTrackBar.Value * 10;
+          gpuClock = val;
+          gpuClockValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} MHz");
+          ScheduleLatestHardwareApply("gpuClock", () => {
+            SetGPUClockLimit(val);
+            SaveConfig("GpuClock");
+          });
           UpdateCheckedState("gpuClockGroup", Strings.SetGpuClockSlider);
         };
 
         gpuClockTrackBar.MouseUp += (sender, e) => {
-          gpuClock = gpuClockTrackBar.Value * 10;
-          Task.Run(() => SetGPUClockLimit(gpuClock));
-          SaveConfig("GpuClock");
+          int val = gpuClockTrackBar.Value * 10;
+          gpuClock = val;
+          ApplyHardwareSettingNow("gpuClock", () => {
+            SetGPUClockLimit(val);
+            SaveConfig("GpuClock");
+          });
           UpdateCheckedState("gpuClockGroup", Strings.SetGpuClockSlider);
         };
 
@@ -867,8 +893,10 @@ namespace OmenSuperHub {
         maxFrameRateMenu.DropDownItems.Add(new ToolStripMenuItem(Strings.PerfMaxFrameRateTip) { Enabled = false });
         maxFrameRateMenu.DropDownItems.Add(CreateMenuItem(Strings.NotSet, "maxFrameRateGroup", (s, e) => {
           maxFrameRate = -1;
-          Task.Run(() => NvApiWrapper.NVAPI_SetMaxFrameRate(0));
-          SaveConfig("MaxFrameRate");
+          ApplyHardwareSettingNow("maxFrameRate", () => {
+            NvApiWrapper.NVAPI_SetMaxFrameRate(0);
+            SaveConfig("MaxFrameRate");
+          });
         }, true));
         maxFrameRateMenu.DropDownItems.Add(CreateMenuItem(Strings.SetMaxFrameRateSlider, "maxFrameRateGroup", (s, e) => { }, false));
         maxFrameRateTrackBar = new ToolStripTrackBar();
@@ -880,19 +908,15 @@ namespace OmenSuperHub {
 
         maxFrameRateValueLabel = new ToolStripMenuItem(string.Format(Strings.CurrentSliderValueTemp, $"{IndexToFrameRate(maxFrameRateTrackBar.Value)} FPS")) { Enabled = false };
 
-        maxFrameRateTrackBar.MouseDown += (sender, e) => {
-          maxFrameRate = IndexToFrameRate(maxFrameRateTrackBar.Value);
-          System.Threading.Tasks.Task.Run(() => NvApiWrapper.NVAPI_SetMaxFrameRate(maxFrameRate));
-          SaveConfig("MaxFrameRate");
-          UpdateCheckedState("maxFrameRateGroup", Strings.SetMaxFrameRateSlider);
-        };
-
         maxFrameRateTrackBar.ValueChanged += (sender, e) => {
-          maxFrameRate = IndexToFrameRate(maxFrameRateTrackBar.Value);
-          Task.Run(() => NvApiWrapper.NVAPI_SetMaxFrameRate(maxFrameRate));
-          SaveConfig("MaxFrameRate");
-          if (maxFrameRate > 0) {
-            maxFrameRateValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{IndexToFrameRate(maxFrameRateTrackBar.Value)} FPS");
+          int val = IndexToFrameRate(maxFrameRateTrackBar.Value);
+          maxFrameRate = val;
+          ScheduleLatestHardwareApply("maxFrameRate", () => {
+            NvApiWrapper.NVAPI_SetMaxFrameRate(val);
+            SaveConfig("MaxFrameRate");
+          });
+          if (val > 0) {
+            maxFrameRateValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{val} FPS");
           } else {
             maxFrameRateValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, Strings.Unlimited);
           }
@@ -900,9 +924,12 @@ namespace OmenSuperHub {
         };
 
         maxFrameRateTrackBar.MouseUp += (sender, e) => {
-          maxFrameRate = IndexToFrameRate(maxFrameRateTrackBar.Value);
-          System.Threading.Tasks.Task.Run(() => NvApiWrapper.NVAPI_SetMaxFrameRate(maxFrameRate));
-          SaveConfig("MaxFrameRate");
+          int val = IndexToFrameRate(maxFrameRateTrackBar.Value);
+          maxFrameRate = val;
+          ApplyHardwareSettingNow("maxFrameRate", () => {
+            NvApiWrapper.NVAPI_SetMaxFrameRate(val);
+            SaveConfig("MaxFrameRate");
+          });
           UpdateCheckedState("maxFrameRateGroup", Strings.SetMaxFrameRateSlider);
         };
 
