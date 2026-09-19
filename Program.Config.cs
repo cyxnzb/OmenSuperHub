@@ -1437,7 +1437,9 @@ namespace OmenSuperHub {
       // Balanced 是安全基线：平台默认功耗、自动风扇、不附加超频。
       fanTable = "cool";
       fanControl = "auto";
-      tempSensitivity = "medium";
+      // Keep the original default thermal responsiveness. Balanced should simplify
+      // power policy, not silently make the fan controller four times less responsive.
+      tempSensitivity = "high";
       cpuPower = $"{targetPL1Default} W";
       tppPower = defaultTppSetting;
       tgpPower = "on";
