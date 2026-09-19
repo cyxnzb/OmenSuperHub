@@ -6,10 +6,6 @@ on:
       - master
   workflow_dispatch:
 
-concurrency:
-  # v2 avoids being blocked by stale runs from the earlier push+PR concurrency group.
-  group: audit-build-v2-${{ github.event.pull_request.number || github.ref_name }}
-  cancel-in-progress: true
 
 jobs:
   build:
