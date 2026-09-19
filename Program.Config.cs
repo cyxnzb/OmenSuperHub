@@ -924,6 +924,8 @@ namespace OmenSuperHub {
                   break;
                 case "TempSensitivity":
                   key.SetValue("TempSensitivity", tempSensitivity);
+                  if (currentPreset == "PresetBalanced")
+                    key.SetValue("BalancedThermalRevision", BalancedThermalRevision);
                   break;
                 case "CpuPower":
                   key.SetValue("CpuPower", cpuPower);
