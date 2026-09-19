@@ -134,7 +134,8 @@ namespace OmenSuperHub {
 
     private static void ValidatePoints(IList<FanCurvePoint> points) {
       if (points.Count < 2 ||
-          points.Any(point => point.Temperature < 0 || point.FanSpeed < 0) ||
+          points.Any(point => point.Temperature < 0 || point.Temperature > 130 ||
+                              point.FanSpeed < 0 || point.FanSpeed > 25500) ||
           points.GroupBy(point => point.Temperature).Any(group => group.Count() > 1))
         throw new InvalidDataException(Strings.FanCurveInvalidFile);
     }

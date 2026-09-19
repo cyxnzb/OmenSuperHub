@@ -42,6 +42,12 @@
     public static string FanConfig => T("风扇配置", "風扇配置", "Fan Config");
     public static string FanControl => T("风扇控制", "風扇控制", "Fan Control");
     public static string PerfControl => T("性能控制", "效能控制", "Performance");
+    public static string AdvancedPerformanceTuning => T("高级调优", "進階調校", "Advanced Tuning");
+    public static string AdvancedPerformanceNote => T(
+        "💡面向高级用户：修改功耗、负载线或超频参数可能提高温度、噪音和稳定性风险。",
+        "💡面向進階使用者：修改功耗、負載線或超頻參數可能提高溫度、噪音與穩定性風險。",
+        "💡 For advanced users. Power, load-line and overclock changes can increase heat, noise and stability risk."
+    );
     public static string HwMonitor => T("硬件监控", "硬體監控", "HW Monitor");
     public static string FloatingBar => T("浮窗显示", "浮窗顯示", "Overlay");
     public static string OmenKeyMenu => T("Omen键", "Omen鍵", "Omen Key");
@@ -56,6 +62,7 @@
     // 预设菜单
     // ─────────────────────────────────────────────────────────────────────────
     public static string PresetsMenu => T("预设", "預設", "Presets");
+    public static string PresetBalanced => T("均衡", "均衡", "Balanced");
     public static string PresetExtreme => T("极致性能", "極致性能", "Extreme Performance");
     public static string PresetGpuPriority => T("GPU优先", "GPU優先", "GPU Priority");
     public static string PresetLightUse => T("轻度使用", "輕度使用", "Light Use");
@@ -81,10 +88,15 @@
         "💡只有自訂預設能永久儲存設定並額外包含硬體監控配置，內建預設的變更會在下次切換預設時遺失！",
         "💡 Only custom presets permanently save settings and include hardware monitoring configurations; changes made to built-in presets will be lost the next time you switch presets."
     );
+    public static string PresetBalancedTooltip => T(
+        "推荐日常使用。保持平台默认功耗和性能模式，自动调节风扇，不额外超频。",
+        "建議日常使用。維持平台預設功耗與效能模式，自動調節風扇，不額外超頻。",
+        "Recommended for daily use. Keeps platform-default power behavior, automatic fan control, and no extra overclock."
+    );
     public static string PresetExtremeTooltip => T(
-        "完全释放性能，甚至可以尝试继续调高CPU功率。",
-        "完全釋放效能，甚至可以嘗試繼續調高CPU功率。",
-        "Unleash full performance—you can even try further increasing the CPU power."
+        "使用平台性能模式与平台允许的高功耗上限，不自动额外超频。",
+        "使用平台效能模式與平台允許的高功耗上限，不自動額外超頻。",
+        "Uses the platform performance mode and supported high power limits without applying extra overclock automatically."
     );
     public static string PresetGpuPriorityTooltip => T(
         "散热不足的情况下优先保证GPU性能，适当降低CPU功耗。",
@@ -288,9 +300,9 @@
     // 高温警告（气泡）
     public static string HighTempBalloonTitle => T("温度过高警告", "溫度過高警告", "High Temperature Warning");
     public static string HighTempBalloonText(int limit, float temp) => T(
-        $"检测到CPU温度高于{limit - 5}℃ ({temp:F1}℃)，且风扇处于固定转速状态，OSH已自动切换为降温模式并将风扇控制切换为自动模式。",
-        $"偵測到CPU溫度高於{limit - 5}℃ ({temp:F1}℃)，且風扇處於固定轉速狀態，OSH已自動切換至降溫模式並將風扇控制改為自動。",
-        $"CPU temperature exceeded {limit - 5}°C ({temp:F1}°C) with a fixed fan speed. OSH has switched to Cool mode and Auto fan control.");
+        $"检测到硬件温度接近温度上限（阈值 {limit - 2}℃，当前 {temp:F1}℃），且风扇处于固定转速状态，OSH已自动切换为降温模式并将风扇控制切换为自动模式。",
+        $"偵測到硬體溫度接近溫度上限（門檻 {limit - 2}℃，目前 {temp:F1}℃），且風扇處於固定轉速狀態，OSH已自動切換至降溫模式並將風扇控制改為自動。",
+        $"Hardware temperature is near its limit (threshold {limit - 2}°C, current {temp:F1}°C) with a fixed fan speed. OSH has switched to Cool mode and Auto fan control.");
 
     // ─────────────────────────────────────────────────────────────────────────
     // 性能控制 — 提示文本
