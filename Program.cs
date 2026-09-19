@@ -597,6 +597,7 @@ namespace OmenSuperHub {
         bool exactCpuClockFound = false;
         int cpuTempPriority = 0;
         float cpuFallbackTempSum = 0f;
+        float cpuFallbackTempMax = float.MinValue;
         int cpuFallbackTempCount = 0;
         float? tCpuSample = null, tGpuSample = null;
         float pCpu = -1f, pGpu = -1f;
@@ -621,17 +622,32 @@ namespace OmenSuperHub {
                   if (sensor.SensorType == LibreSensorType.Temperature && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
                     if (IsPlausibleTemperature(value)) {
-                      int priority = string.Equals(sensor.Name, "CPU Package", StringComparison.OrdinalIgnoreCase) ? 3
-                          : sensor.Name.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ? 2
-                          : sensor.Name.IndexOf("Package", StringComparison.OrdinalIgnoreCase) >= 0 ? 1 : 0;
+                      // Prefer aggregate/control temperatures exposed by LibreHardwareMonitor.
+                      // Intel normally exposes CPU Package. AMD Zen may expose Core (Tctl),
+                      // Core (Tdie), Core (Tctl/Tdie) and CCDs Max (Tdie) depending on generation.
+                      // Do not average those together: doing so can bias the control temperature low.
+                      string sensorName = sensor.Name ?? "";
+                      int priority =
+                          string.Equals(sensorName, "CPU Package", StringComparison.OrdinalIgnoreCase) ? 6 :
+                          sensorName.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ? 6 :
+                          sensorName.IndexOf("(Tctl)", StringComparison.OrdinalIgnoreCase) >= 0 ? 5 :
+                          sensorName.IndexOf("CCDs Max", StringComparison.OrdinalIgnoreCase) >= 0 ? 4 :
+                          sensorName.IndexOf("Core Max", StringComparison.OrdinalIgnoreCase) >= 0 ? 4 :
+                          sensorName.IndexOf("(Tdie)", StringComparison.OrdinalIgnoreCase) >= 0 ? 3 :
+                          sensorName.IndexOf("Package", StringComparison.OrdinalIgnoreCase) >= 0 ? 2 :
+                          sensorName.IndexOf("Core Average", StringComparison.OrdinalIgnoreCase) >= 0 ? 1 : 0;
+
                       if (priority > cpuTempPriority) {
                         tCpuSample = value;
                         cpuTempPriority = priority;
                       } else if (priority == 0 &&
-                                 sensor.Name.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) < 0) {
-                        // 没有标准 Package/Tctl 命名时，使用其余真实 CPU 温度的平均值兜底。
-                        // 相比随便挑单核心温度，这样更不容易被短时尖峰带着风扇乱跳。
+                                 sensorName.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) < 0) {
+                        // Last-resort fallback for unusual CPUs with no aggregate sensor.
+                        // Blend average and hottest core rather than taking either extreme:
+                        // average alone can under-report a hot core, while raw max can overreact
+                        // to a one-sample spike.
                         cpuFallbackTempSum += value;
+                        cpuFallbackTempMax = Math.Max(cpuFallbackTempMax, value);
                         cpuFallbackTempCount++;
                       }
                     }
@@ -664,8 +680,12 @@ namespace OmenSuperHub {
             }
           }
           }
-          if (!tCpuSample.HasValue && cpuFallbackTempCount > 0)
-            tCpuSample = cpuFallbackTempSum / cpuFallbackTempCount;
+          if (!tCpuSample.HasValue && cpuFallbackTempCount > 0) {
+            float fallbackAverage = cpuFallbackTempSum / cpuFallbackTempCount;
+            // 75% average + 25% hottest core: conservative enough to catch asymmetric
+            // core heating without making a single transient core fully dictate the fan.
+            tCpuSample = fallbackAverage * 0.75f + cpuFallbackTempMax * 0.25f;
+          }
           gGpu = tGpuSample.HasValue;
           float outCpuTemp = tCpuSample ?? -1f;
           float outGpuTemp = tGpuSample ?? -1f;
