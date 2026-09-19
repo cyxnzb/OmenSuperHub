@@ -1,15 +1,14 @@
 name: Audit Build
 
 on:
-  push:
-    branches:
-      - audit-stability-20260918
   pull_request:
     branches:
       - master
+  workflow_dispatch:
 
 concurrency:
-  group: audit-build-${{ github.head_ref || github.ref_name }}
+  # v2 avoids being blocked by stale runs from the earlier push+PR concurrency group.
+  group: audit-build-v2-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -34,7 +33,7 @@ jobs:
       - name: Upload UAT build
         uses: actions/upload-artifact@v4
         with:
-          name: OmenSuperHub-audit-${{ github.sha }}
+          name: OmenSuperHub-audit-${{ github.event.pull_request.head.sha || github.sha }}
           path: bin/x64/Release/
           if-no-files-found: error
           retention-days: 14
