@@ -127,8 +127,7 @@ namespace OmenSuperHub {
     static readonly Dictionary<string, int> deferredHardwareApplyVersions = new Dictionary<string, int>();
     static int deferredHardwareApplyGeneration = 0;
     const int AutoFanDeadband = 2;       // 200 RPM
-    const int AutoFanRiseStep = 3;       // max +300 RPM per second
-    const int AutoFanFallStep = 2;       // max -200 RPM per second
+    const int AutoFanFallStep = 2;       // max -200 RPM per second when cooling down
     static bool autoFanSensorFailsafeActive = false;
     static volatile bool tempReady = false;   // 子进程首次输出有效温度后置 true
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
@@ -1552,9 +1551,11 @@ namespace OmenSuperHub {
       if (!emergency && Math.Abs(delta) <= AutoFanDeadband) return;
 
       int next = target;
-      if (!emergency) {
-        int maxStep = delta > 0 ? AutoFanRiseStep : AutoFanFallStep;
-        next = current + Math.Sign(delta) * Math.Min(Math.Abs(delta), maxStep);
+      if (!emergency && delta < 0) {
+        // Heating must win over acoustics: ramp up to the calculated target immediately,
+        // matching the original controller's thermal response. Only slow the ramp-down
+        // to prevent fan hunting after short temperature spikes.
+        next = current - Math.Min(Math.Abs(delta), AutoFanFallStep);
       }
 
       SetFanLevel(next, next, Is3FanNb);
