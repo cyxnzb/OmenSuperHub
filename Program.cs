@@ -1325,16 +1325,9 @@ namespace OmenSuperHub {
 
       double elapsedSeconds = Math.Max(0.05, Math.Min(5.0, (sampleUtc - lastSmoothedSampleUtc).TotalSeconds));
 
-      // Attack/release behavior:
-      // - rising temperature keeps the original 250ms/high-refresh thermal response
-      //   (four response applications per second), but expressed in a time-stable form;
-      // - falling temperature uses the gentler time-normalized response so fan speed can
-      //   decay smoothly instead of hunting after short spikes.
-      double effectiveResponse = response;
-      if (rawValue > previousValue)
-        effectiveResponse = 1.0 - Math.Pow(1.0 - response, 4.0);
-
-      double baseRetention = Math.Max(0.0, Math.Min(0.999999, 1.0 - effectiveResponse));
+      // Normalize smoothing to real elapsed time so changing the monitor/UI refresh rate
+      // does not secretly change the thermal controller's effective response.
+      double baseRetention = Math.Max(0.0, Math.Min(0.999999, 1.0 - response));
       float alpha = (float)(1.0 - Math.Pow(baseRetention, elapsedSeconds));
       lastSmoothedSampleUtc = sampleUtc;
       return rawValue * alpha + previousValue * (1.0f - alpha);
@@ -1381,8 +1374,8 @@ namespace OmenSuperHub {
         }
       }
 
-      // 只在拿到新的温度样本时平滑。升温采用快速 attack、降温采用较慢 release；
-      // 既保留原版高刷新下的压温响应，又避免降温阶段风扇频繁来回波动。
+      // 只在拿到新的温度样本时平滑，并按真实采样间隔换算 alpha。
+      // 监控界面刷新率不应改变风扇控制器的热响应语义。
       if (monitorCPU && cpuTempReady) {
         smoothedCPUTemp = SmoothTemperatureSample(
             tempCPU, smoothedCPUTemp, respondSpeed, lastCpuTempSampleUtc, ref lastCpuSmoothedSampleUtc);
