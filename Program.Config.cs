@@ -488,11 +488,12 @@ namespace OmenSuperHub {
           gpuTempList = new List<int> { 30 - delta, 60 - delta, 87 - delta, maxGPUT };
           gpuSpeedList = new List<int> { 0, maxRpm / 3, maxRpm * 2 / 3, maxRpm };
         } else {
-          // cool: cpu45/gpu35 → maxRpm/4, (maxTemp-5)℃ → maxRpm
+          // cool: preserve the original thermal intent — reach platform max fan speed
+          // 5°C before the thermal limit. Do not command above the known platform max.
           cpuTempList = new List<int> { 45, maxCpu - 5, maxCpu };
-          cpuSpeedList = new List<int> { maxRpm / 4, maxRpm * 4 / 5, maxRpm };
+          cpuSpeedList = new List<int> { maxRpm / 4, maxRpm, maxRpm };
           gpuTempList = new List<int> { 45 - delta, maxGPUT - 5, maxGPUT };
-          gpuSpeedList = new List<int> { maxRpm / 4, maxRpm * 4 / 5, maxRpm };
+          gpuSpeedList = new List<int> { maxRpm / 4, maxRpm, maxRpm };
         }
 
         return new FanCurveProfile(
@@ -533,6 +534,26 @@ namespace OmenSuperHub {
         points.Add(new FanCurvePoint(Math.Max(1, temperatureMaximum), finalFanSpeed));
       }
       return points;
+    }
+
+    static FanCurveProfile CreatePreviousAuditCoolFanCurveProfile() {
+      int maxGPUT = maxGPUTemp ?? 87;
+      if (!platformMaxFanSpeed.HasValue || !maxCPUTemp.HasValue)
+        return null;
+
+      int maxRpm = platformMaxFanSpeed.Value;
+      int maxCpu = maxCPUTemp.Value;
+      int delta = maxCpu - maxGPUT;
+
+      return new FanCurveProfile(
+          NormalizeDefaultFanCurve(
+              new List<int> { 45, maxCpu - 5, maxCpu },
+              new List<int> { maxRpm / 4, maxRpm * 4 / 5, maxRpm },
+              maxCpu),
+          NormalizeDefaultFanCurve(
+              new List<int> { 45 - delta, maxGPUT - 5, maxGPUT },
+              new List<int> { maxRpm / 4, maxRpm * 4 / 5, maxRpm },
+              maxGPUT));
     }
 
     static FanCurveProfile CreateLegacyGeneratedFanCurveProfile(bool isSilent) {
@@ -587,7 +608,20 @@ namespace OmenSuperHub {
       if (!isSilent && !isCool) return false;
 
       FanCurveProfile legacyProfile = CreateLegacyGeneratedFanCurveProfile(isSilent);
-      if (!FanCurveMatches(legacyProfile, cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList))
+      bool matchesLegacy = FanCurveMatches(
+          legacyProfile, cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList);
+
+      // Builds from the first audit pass generated a deliberately quieter Cool curve
+      // (80% max at Tlimit-5). It proved too conservative in real use. Migrate only
+      // an exact generated match so user-edited curves remain untouched.
+      bool matchesPreviousAuditCool = false;
+      if (!isSilent) {
+        FanCurveProfile previousAuditCool = CreatePreviousAuditCoolFanCurveProfile();
+        matchesPreviousAuditCool = FanCurveMatches(
+            previousAuditCool, cpuTempList, cpuSpeedList, gpuTempList, gpuSpeedList);
+      }
+
+      if (!matchesLegacy && !matchesPreviousAuditCool)
         return false;
 
       FanCurveProfile replacement = CreateDefaultFanCurveProfile(isSilent);
