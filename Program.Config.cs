@@ -830,6 +830,8 @@ namespace OmenSuperHub {
              presetKey == "PresetGpuPriority" || presetKey == "PresetLightUse";
     }
 
+    const int BalancedThermalRevision = 2;
+
     static bool IsMonitorMetricConfig(string configName) {
       return configName == "ShowCPUTemp" || configName == "ShowCPUPower" || configName == "ShowCPUFrequency" ||
              configName == "ShowGPUTemp" || configName == "ShowGPUPower" || configName == "ShowGPUFrequency";
@@ -854,6 +856,8 @@ namespace OmenSuperHub {
               key.SetValue("FanTable", fanTable);
               key.SetValue("FanControl", fanControl);
               key.SetValue("TempSensitivity", tempSensitivity);
+              if (currentPreset == "PresetBalanced")
+                key.SetValue("BalancedThermalRevision", BalancedThermalRevision);
               key.SetValue("CpuPower", cpuPower);
               key.SetValue("TgpPower", tgpPower);
               key.SetValue("PpabPower", ppabPower);
@@ -1084,6 +1088,20 @@ namespace OmenSuperHub {
             fanTable = (string)key.GetValue("FanTable", fanTable);
             fanControl = (string)key.GetValue("FanControl", fanControl);
             tempSensitivity = (string)key.GetValue("TempSensitivity", tempSensitivity);
+
+            // PresetBalanced was introduced on this audit branch. Early audit builds
+            // generated it with "medium" thermal response, which could remain persisted
+            // and override the corrected default forever. Migrate that one-time audit
+            // default only; after revision 2, an explicit user choice of medium/low is kept.
+            int balancedThermalRevision = Convert.ToInt32(key.GetValue("BalancedThermalRevision", 0));
+            if (currentPreset == "PresetBalanced" &&
+                balancedThermalRevision < BalancedThermalRevision &&
+                tempSensitivity == "medium") {
+              tempSensitivity = "high";
+              SaveConfig("TempSensitivity");
+              Logger.Info("Migrated PresetBalanced thermal response from audit revision 1 to high.");
+            }
+
             cpuPower = (string)key.GetValue("CpuPower", cpuPower);
             gpuCoreOverclock = (int)key.GetValue("GpuCoreOverclock", -1);
             gpuMemoryOverclock = (int)key.GetValue("GpuMemoryOverclock", -1);
