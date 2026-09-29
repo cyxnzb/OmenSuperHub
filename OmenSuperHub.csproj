@@ -89,12 +89,6 @@
     <SignManifests>false</SignManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>0FF25508E82D933D2889D9605B7F06A55C7283BB</ManifestCertificateThumbprint>
-  </PropertyGroup>
-  <PropertyGroup>
-    <ManifestKeyFile>OmenSuperHub_TemporaryKey.pfx</ManifestKeyFile>
-  </PropertyGroup>
-  <PropertyGroup>
     <GenerateManifests>false</GenerateManifests>
   </PropertyGroup>
   <PropertyGroup>
@@ -338,7 +332,6 @@
     </BootstrapperPackage>
   </ItemGroup>
   <ItemGroup>
-    <None Include="OmenSuperHub_TemporaryKey.pfx" />
     <None Include="packages.config" />
     <None Include="README.EN.md" />
     <None Include="README.md" />

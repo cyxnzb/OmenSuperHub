@@ -1,6 +1,7 @@
 *.user
 *.suo
+*.pfx
 Bin/
 obj/
-packages/ 
+packages/
 .vs/

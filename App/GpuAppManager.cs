@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 using System.Linq;
 using System.Management;
 using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -60,7 +62,10 @@ namespace OmenSuperHub {
     public static void SetMemoryClockOffset(int offsetMHz) {
       NVIDIA.Initialize();
       try {
-        PhysicalGPU gpu = PhysicalGPU.GetPhysicalGPUs()[0];
+        PhysicalGPU[] gpus = PhysicalGPU.GetPhysicalGPUs();
+        if (gpus.Length == 0)
+          throw new InvalidOperationException("未找到 GPU");
+        PhysicalGPU gpu = gpus[0];
 
         var clockDelta = new PerformanceStates20ClockEntryV1(
             PublicClockDomain.Memory,                              // 显存时钟域
@@ -86,7 +91,9 @@ namespace OmenSuperHub {
     public static int GetCoreClockOffset() {
       NVIDIA.Initialize();
       try {
-        PhysicalGPU gpu = PhysicalGPU.GetPhysicalGPUs()[0];
+        PhysicalGPU[] gpus = PhysicalGPU.GetPhysicalGPUs();
+        if (gpus.Length == 0) return 0;
+        PhysicalGPU gpu = gpus[0];
         var pstatesInfo = GPUApi.GetPerformanceStates20(gpu.Handle);
 
         // 从 Clocks 字典中获取 P0 状态的时钟条目数组
@@ -107,7 +114,9 @@ namespace OmenSuperHub {
     public static int GetMemoryClockOffset() {
       NVIDIA.Initialize();
       try {
-        PhysicalGPU gpu = PhysicalGPU.GetPhysicalGPUs()[0];
+        PhysicalGPU[] gpus = PhysicalGPU.GetPhysicalGPUs();
+        if (gpus.Length == 0) return 0;
+        PhysicalGPU gpu = gpus[0];
         var pstatesInfo = GPUApi.GetPerformanceStates20(gpu.Handle);
 
         if (pstatesInfo.Clocks.TryGetValue(PerformanceStateId.P0_3DPerformance, out var clockEntries)) {
@@ -142,7 +151,8 @@ namespace OmenSuperHub {
             return (int)(kvp.Value.Frequency / 1000);
           }
         }
-      } catch {
+      } catch (Exception ex) {
+        Logger.Warn($"GetGraphicsBoostClock failed: {ex.Message}");
       }
 
       return 0;
@@ -167,7 +177,8 @@ namespace OmenSuperHub {
             return (int)(kvp.Value.Frequency / 1000);
           }
         }
-      } catch {
+      } catch (Exception ex) {
+        Logger.Warn($"GetMemoryBoostClock failed: {ex.Message}");
       }
 
       return 0;
@@ -178,7 +189,7 @@ namespace OmenSuperHub {
       try {
         // 直接构建命令字符串
         string command = "nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader";
-        ProcessResult result = ExecuteCommand(command);
+        ProcessResult result = ExecuteCommand(command, NvidiaQueryTimeoutMilliseconds);
 
         if (result.ExitCode == 0) {
           string[] lines = result.Output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -192,7 +203,9 @@ namespace OmenSuperHub {
             }
           }
         }
-      } catch { }
+      } catch (Exception ex) {
+        Logger.Warn($"GetGpuApps failed: {ex.Message}");
+      }
       return apps;
     }
 
@@ -225,7 +238,8 @@ namespace OmenSuperHub {
         if (result.ExitCode != 0) {
           MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), $"{Strings.RestartGPUFailed} {Strings.Error}：{result.Error}", Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-      } catch {
+      } catch (Exception ex) {
+        Logger.Error($"RestartGpu failed: {ex.Message}");
         MessageBox.Show(Application.OpenForms.OfType<HelpForm>().FirstOrDefault(), Strings.RestartGPUFailed, Strings.Hint, MessageBoxButtons.OK, MessageBoxIcon.Warning);
       }
     }
@@ -270,7 +284,7 @@ namespace OmenSuperHub {
     /// 通过 nvidia-smi -L 获取第一个 NVIDIA 显卡的型号名称
     /// </summary>
     public static string GetGpuModelFromNvidiaSmi() {
-      var result = ExecuteCommand("nvidia-smi -L");
+      var result = ExecuteCommand("nvidia-smi -L", NvidiaQueryTimeoutMilliseconds);
       if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
         return null;
 
@@ -318,7 +332,8 @@ namespace OmenSuperHub {
 
         return gpus != null &&
                gpus.Length > 0;
-      } catch {
+      } catch (Exception ex) {
+        Logger.Warn($"HasNvidiaGpu failed: {ex.Message}");
         return false;
       }
     }
@@ -337,7 +352,7 @@ namespace OmenSuperHub {
       // Returns [Current Limit, Max Limit]
       var limits = new float[2] { -2f, -2f };
       try {
-        ProcessResult result = ExecuteCommand("nvidia-smi -q -d POWER");
+        ProcessResult result = ExecuteCommand("nvidia-smi -q -d POWER", NvidiaQueryTimeoutMilliseconds);
 
         if (result.ExitCode == 0) {
           string currentPattern = @"Current Power Limit\s+:\s+([\d.]+)\s+W";
@@ -346,12 +361,18 @@ namespace OmenSuperHub {
           var currentMatch = Regex.Match(result.Output, currentPattern);
           var maxMatch = Regex.Match(result.Output, maxPattern);
 
-          if (currentMatch.Success && maxMatch.Success) {
-            limits[0] = float.Parse(currentMatch.Groups[1].Value);
-            limits[1] = float.Parse(maxMatch.Groups[1].Value);
+          if (currentMatch.Success && maxMatch.Success &&
+              float.TryParse(currentMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float currentLimit) &&
+              float.TryParse(maxMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float maxLimit)) {
+            limits[0] = currentLimit;
+            limits[1] = maxLimit;
+          } else {
+            Logger.Warn("Unable to parse NVIDIA GPU power limits from nvidia-smi output.");
           }
         }
-      } catch { }
+      } catch (Exception ex) {
+        Logger.Warn($"GetGpuPowerLimits failed: {ex.Message}");
+      }
       return limits;
     }
 
@@ -375,21 +396,26 @@ namespace OmenSuperHub {
     public static int GetGpuTemperatureTarget() {
       int limit = -2;
       try {
-        ProcessResult result = ExecuteCommand("nvidia-smi -q -d TEMPERATURE");
+        ProcessResult result = ExecuteCommand("nvidia-smi -q -d TEMPERATURE", NvidiaQueryTimeoutMilliseconds);
         if (result.ExitCode == 0) {
           // 匹配形如 "GPU Target Temperature               : 87 C"
           string targetPattern = @"GPU Target Temperature\s+:\s+(\d+)\s+C";
           var targetMatch = Regex.Match(result.Output, targetPattern);
-          if (targetMatch.Success) {
-            limit = int.Parse(targetMatch.Groups[1].Value);
+          if (targetMatch.Success &&
+              int.TryParse(targetMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLimit)) {
+            limit = parsedLimit;
+          } else {
+            Logger.Warn("Unable to parse NVIDIA GPU temperature target from nvidia-smi output.");
           }
         }
-      } catch { }
+      } catch (Exception ex) {
+        Logger.Warn($"GetGpuTemperatureTarget failed: {ex.Message}");
+      }
       return limit;
     }
 
     public static bool CheckDBVersion(int kind) {
-      ProcessResult result = ExecuteCommand("nvidia-smi");
+      ProcessResult result = ExecuteCommand("nvidia-smi", NvidiaQueryTimeoutMilliseconds);
 
       if (result.ExitCode == 0) {
         // 直接匹配第一行的 NVIDIA-SMI 版本号
@@ -449,7 +475,14 @@ namespace OmenSuperHub {
       //var lines = output.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
 
       string command = "pnputil /enum-drivers";
-      var result = ExecuteCommand(command);
+      var result = ExecuteCommand(command, DriverCommandTimeoutMilliseconds);
+      if (result.ExitCode != 0) {
+        Logger.Error($"Failed to enumerate installed drivers before DB change: {result.Error}");
+        DeleteExtractedFiles(extractedInfFilePath);
+        DeleteExtractedFiles(extractedSysFilePath);
+        DeleteExtractedFiles(extractedCatFilePath);
+        return;
+      }
       string output = result.Output;
 
       // 读取驱动程序列表文件
@@ -485,7 +518,14 @@ namespace OmenSuperHub {
       }
 
       if (!hasVersion) {
-        ExecuteCommand($"pnputil /add-driver \"{driverFile}\" /install /force");
+        var installResult = ExecuteCommand($"pnputil /add-driver \"{driverFile}\" /install /force", DriverCommandTimeoutMilliseconds);
+        if (installResult.ExitCode != 0) {
+          Logger.Error($"Failed to install target DB driver; existing driver packages will be preserved: {installResult.Error}");
+          DeleteExtractedFiles(extractedInfFilePath);
+          DeleteExtractedFiles(extractedSysFilePath);
+          DeleteExtractedFiles(extractedCatFilePath);
+          return;
+        }
         //Console.WriteLine("成功更改DB版本!");
       }
 
@@ -493,7 +533,9 @@ namespace OmenSuperHub {
         //Console.WriteLine("找到需要删除的驱动程序包:");
         foreach (var name in namesToDelete) {
           //Console.WriteLine($"删除驱动程序包: {name}");
-          ExecuteCommand($"pnputil /delete-driver \"{name}\" /uninstall /force");
+          var deleteResult = ExecuteCommand($"pnputil /delete-driver \"{name}\" /uninstall /force", DriverCommandTimeoutMilliseconds);
+          if (deleteResult.ExitCode != 0)
+            Logger.Warn($"Failed to delete old DB driver package {name}: {deleteResult.Error}");
         }
       } else {
         //Console.WriteLine("没有需要删除的驱动程序包.");
@@ -511,11 +553,14 @@ namespace OmenSuperHub {
     }
 
     public static void ChangeDBState(bool State) {
+      ProcessResult result;
       if (State) {
-        ExecuteCommand($"pnputil /enable-device \"ACPI\\NVDA0820\\NPCF\"");
+        result = ExecuteCommand($"pnputil /enable-device \"ACPI\\NVDA0820\\NPCF\"");
       } else {
-        ExecuteCommand($"pnputil /disable-device \"ACPI\\NVDA0820\\NPCF\"");
+        result = ExecuteCommand($"pnputil /disable-device \"ACPI\\NVDA0820\\NPCF\"");
       }
+      if (result.ExitCode != 0)
+        Logger.Warn($"Failed to change DB device state to {(State ? "enabled" : "disabled")}: {result.Error}");
     }
 
     static void ExtractResourceToFile(string resourceName, string outputFilePath) {
@@ -539,7 +584,24 @@ namespace OmenSuperHub {
       }
     }
 
-    public static ProcessResult ExecuteCommand(string command) {
+    private const int DefaultCommandTimeoutMilliseconds = 60000;
+    private const int NvidiaQueryTimeoutMilliseconds = 10000;
+    private const int DriverCommandTimeoutMilliseconds = 120000;
+
+    public static ProcessResult ExecuteCommand(string command, int timeoutMilliseconds = DefaultCommandTimeoutMilliseconds) {
+      if (string.IsNullOrWhiteSpace(command)) {
+        return new ProcessResult {
+          ExitCode = -1,
+          Output = "",
+          Error = "Command is empty.",
+          TimedOut = false,
+          DurationMilliseconds = 0
+        };
+      }
+
+      if (timeoutMilliseconds <= 0)
+        timeoutMilliseconds = DefaultCommandTimeoutMilliseconds;
+
       var processStartInfo = new ProcessStartInfo {
         FileName = "cmd.exe",
         Arguments = $"/c {command}",
@@ -550,16 +612,76 @@ namespace OmenSuperHub {
         WindowStyle = ProcessWindowStyle.Hidden
       };
 
+      var output = new StringBuilder();
+      var error = new StringBuilder();
+      var stopwatch = Stopwatch.StartNew();
+
       using (var process = new Process { StartInfo = processStartInfo }) {
-        process.Start();
-        string output = process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
+        process.OutputDataReceived += (s, e) => {
+          if (e.Data == null) return;
+          lock (output) output.AppendLine(e.Data);
+        };
+        process.ErrorDataReceived += (s, e) => {
+          if (e.Data == null) return;
+          lock (error) error.AppendLine(e.Data);
+        };
+
+        try {
+          process.Start();
+          process.BeginOutputReadLine();
+          process.BeginErrorReadLine();
+        } catch (Exception ex) {
+          stopwatch.Stop();
+          return new ProcessResult {
+            ExitCode = -1,
+            Output = output.ToString(),
+            Error = ex.Message,
+            TimedOut = false,
+            DurationMilliseconds = stopwatch.ElapsedMilliseconds
+          };
+        }
+
+        bool exited = process.WaitForExit(timeoutMilliseconds);
+        if (!exited) {
+          try { process.Kill(); } catch { }
+          try { process.WaitForExit(5000); } catch { }
+          stopwatch.Stop();
+
+          string timeoutMessage = $"Command timed out after {timeoutMilliseconds} ms: {command}";
+          Logger.Warn(timeoutMessage);
+          string capturedOutput;
+          string capturedError;
+          lock (output) capturedOutput = output.ToString();
+          lock (error) capturedError = error.ToString();
+
+          return new ProcessResult {
+            ExitCode = -1,
+            Output = capturedOutput,
+            Error = string.IsNullOrWhiteSpace(capturedError)
+                ? timeoutMessage
+                : capturedError.TrimEnd() + Environment.NewLine + timeoutMessage,
+            TimedOut = true,
+            DurationMilliseconds = stopwatch.ElapsedMilliseconds
+          };
+        }
+
+        // With asynchronous redirected streams, a second parameterless wait is
+        // required to ensure the final OutputDataReceived/ErrorDataReceived
+        // callbacks have drained before the result is returned.
         process.WaitForExit();
+        stopwatch.Stop();
+
+        string finalOutput;
+        string finalError;
+        lock (output) finalOutput = output.ToString();
+        lock (error) finalError = error.ToString();
 
         return new ProcessResult {
           ExitCode = process.ExitCode,
-          Output = output,
-          Error = error
+          Output = finalOutput,
+          Error = finalError,
+          TimedOut = false,
+          DurationMilliseconds = stopwatch.ElapsedMilliseconds
         };
       }
     }
@@ -568,6 +690,8 @@ namespace OmenSuperHub {
       public int ExitCode { get; set; }
       public string Output { get; set; }
       public string Error { get; set; }
+      public bool TimedOut { get; set; }
+      public long DurationMilliseconds { get; set; }
     }
   }
 }
