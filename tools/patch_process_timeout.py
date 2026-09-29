@@ -1,0 +1,160 @@
+from pathlib import Path
+
+path = Path("App/GpuAppManager.cs")
+raw = path.read_bytes()
+had_bom = raw.startswith(b"\xef\xbb\xbf")
+text = raw.decode("utf-8-sig")
+use_crlf = "\r\n" in text
+text = text.replace("\r\n", "\n")
+
+using_old = "using System.Text.RegularExpressions;\n"
+using_new = "using System.Text;\nusing System.Text.RegularExpressions;\n"
+if using_new not in text:
+    if using_old not in text:
+        raise SystemExit("Expected using directive not found")
+    text = text.replace(using_old, using_new, 1)
+
+old = '''    public static ProcessResult ExecuteCommand(string command) {
+      var processStartInfo = new ProcessStartInfo {
+        FileName = "cmd.exe",
+        Arguments = $"/c {command}",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        WindowStyle = ProcessWindowStyle.Hidden
+      };
+
+      using (var process = new Process { StartInfo = processStartInfo }) {
+        process.Start();
+        string output = process.StandardOutput.ReadToEnd();
+        string error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        return new ProcessResult {
+          ExitCode = process.ExitCode,
+          Output = output,
+          Error = error
+        };
+      }
+    }
+
+    public class ProcessResult {
+      public int ExitCode { get; set; }
+      public string Output { get; set; }
+      public string Error { get; set; }
+    }
+'''
+
+new = '''    private const int DefaultCommandTimeoutMilliseconds = 60000;
+
+    public static ProcessResult ExecuteCommand(string command, int timeoutMilliseconds = DefaultCommandTimeoutMilliseconds) {
+      if (string.IsNullOrWhiteSpace(command)) {
+        return new ProcessResult {
+          ExitCode = -1,
+          Output = "",
+          Error = "Command is empty.",
+          TimedOut = false,
+          DurationMilliseconds = 0
+        };
+      }
+
+      if (timeoutMilliseconds <= 0)
+        timeoutMilliseconds = DefaultCommandTimeoutMilliseconds;
+
+      var processStartInfo = new ProcessStartInfo {
+        FileName = "cmd.exe",
+        Arguments = $"/c {command}",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        WindowStyle = ProcessWindowStyle.Hidden
+      };
+
+      var output = new StringBuilder();
+      var error = new StringBuilder();
+      var stopwatch = Stopwatch.StartNew();
+
+      using (var process = new Process { StartInfo = processStartInfo }) {
+        process.OutputDataReceived += (s, e) => {
+          if (e.Data == null) return;
+          lock (output) output.AppendLine(e.Data);
+        };
+        process.ErrorDataReceived += (s, e) => {
+          if (e.Data == null) return;
+          lock (error) error.AppendLine(e.Data);
+        };
+
+        try {
+          process.Start();
+          process.BeginOutputReadLine();
+          process.BeginErrorReadLine();
+        } catch (Exception ex) {
+          stopwatch.Stop();
+          return new ProcessResult {
+            ExitCode = -1,
+            Output = output.ToString(),
+            Error = ex.Message,
+            TimedOut = false,
+            DurationMilliseconds = stopwatch.ElapsedMilliseconds
+          };
+        }
+
+        bool exited = process.WaitForExit(timeoutMilliseconds);
+        if (!exited) {
+          try { process.Kill(); } catch { }
+          try { process.WaitForExit(5000); } catch { }
+          stopwatch.Stop();
+
+          string timeoutMessage = $"Command timed out after {timeoutMilliseconds} ms: {command}";
+          Logger.Warn(timeoutMessage);
+          string capturedError;
+          lock (error) capturedError = error.ToString();
+
+          return new ProcessResult {
+            ExitCode = -1,
+            Output = output.ToString(),
+            Error = string.IsNullOrWhiteSpace(capturedError)
+                ? timeoutMessage
+                : capturedError.TrimEnd() + Environment.NewLine + timeoutMessage,
+            TimedOut = true,
+            DurationMilliseconds = stopwatch.ElapsedMilliseconds
+          };
+        }
+
+        // With asynchronous redirected streams, a second parameterless wait is
+        // required to ensure the final OutputDataReceived/ErrorDataReceived
+        // callbacks have drained before the result is returned.
+        process.WaitForExit();
+        stopwatch.Stop();
+
+        return new ProcessResult {
+          ExitCode = process.ExitCode,
+          Output = output.ToString(),
+          Error = error.ToString(),
+          TimedOut = false,
+          DurationMilliseconds = stopwatch.ElapsedMilliseconds
+        };
+      }
+    }
+
+    public class ProcessResult {
+      public int ExitCode { get; set; }
+      public string Output { get; set; }
+      public string Error { get; set; }
+      public bool TimedOut { get; set; }
+      public long DurationMilliseconds { get; set; }
+    }
+'''
+
+if old not in text:
+    raise SystemExit("Expected ExecuteCommand block not found")
+
+text = text.replace(old, new, 1)
+if use_crlf:
+    text = text.replace("\n", "\r\n")
+data = text.encode("utf-8")
+if had_bom:
+    data = b"\xef\xbb\xbf" + data
+path.write_bytes(data)
