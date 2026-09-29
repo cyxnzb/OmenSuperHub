@@ -1,0 +1,33 @@
+name: Run GPU Query Hardening
+
+on:
+  push:
+    branches:
+      - gpu-query-hardening-20260929
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply patch
+        run: python tools/patch_gpu_query_hardening.py
+
+      - name: Verify patch
+        run: git diff --check && git diff -- App/GpuAppManager.cs
+
+      - name: Commit source and remove temporary patch machinery
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App/GpuAppManager.cs
+          git rm -f tools/patch_gpu_query_hardening.py
+          git rm -f .github/workflows/run-gpu-query-hardening.yml
+          git commit -m "Harden GPU query and DB driver failure handling"
+          git push
