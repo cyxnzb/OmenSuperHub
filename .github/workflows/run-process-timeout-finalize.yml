@@ -1,0 +1,34 @@
+name: Run Process Timeout Finalize
+
+on:
+  push:
+    branches:
+      - process-timeout-20260929
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply patch
+        run: python tools/patch_process_timeout_finalize.py
+
+      - name: Verify patch
+        run: git diff --check && git diff -- App/GpuAppManager.cs
+
+      - name: Commit source and remove temporary patch machinery
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add App/GpuAppManager.cs
+          git rm -f tools/patch_process_timeout_finalize.py
+          git rm -f .github/workflows/run-process-timeout-finalize.yml
+          git rm -f .github/workflows/apply-process-timeout-finalize.yml
+          git commit -m "Finalize external command timeout handling"
+          git push
