@@ -486,7 +486,7 @@ namespace OmenSuperHub {
       }
 
       if (!hasVersion) {
-        ExecuteCommand($"pnputil /add-driver \"{driverFile}\" /install /force");
+        ExecuteCommand($"pnputil /add-driver \"{driverFile}\" /install /force", DriverCommandTimeoutMilliseconds);
         //Console.WriteLine("成功更改DB版本!");
       }
 
@@ -494,7 +494,7 @@ namespace OmenSuperHub {
         //Console.WriteLine("找到需要删除的驱动程序包:");
         foreach (var name in namesToDelete) {
           //Console.WriteLine($"删除驱动程序包: {name}");
-          ExecuteCommand($"pnputil /delete-driver \"{name}\" /uninstall /force");
+          ExecuteCommand($"pnputil /delete-driver \"{name}\" /uninstall /force", DriverCommandTimeoutMilliseconds);
         }
       } else {
         //Console.WriteLine("没有需要删除的驱动程序包.");
@@ -541,6 +541,7 @@ namespace OmenSuperHub {
     }
 
     private const int DefaultCommandTimeoutMilliseconds = 60000;
+    private const int DriverCommandTimeoutMilliseconds = 120000;
 
     public static ProcessResult ExecuteCommand(string command, int timeoutMilliseconds = DefaultCommandTimeoutMilliseconds) {
       if (string.IsNullOrWhiteSpace(command)) {
@@ -603,12 +604,14 @@ namespace OmenSuperHub {
 
           string timeoutMessage = $"Command timed out after {timeoutMilliseconds} ms: {command}";
           Logger.Warn(timeoutMessage);
+          string capturedOutput;
           string capturedError;
+          lock (output) capturedOutput = output.ToString();
           lock (error) capturedError = error.ToString();
 
           return new ProcessResult {
             ExitCode = -1,
-            Output = output.ToString(),
+            Output = capturedOutput,
             Error = string.IsNullOrWhiteSpace(capturedError)
                 ? timeoutMessage
                 : capturedError.TrimEnd() + Environment.NewLine + timeoutMessage,
@@ -623,10 +626,15 @@ namespace OmenSuperHub {
         process.WaitForExit();
         stopwatch.Stop();
 
+        string finalOutput;
+        string finalError;
+        lock (output) finalOutput = output.ToString();
+        lock (error) finalError = error.ToString();
+
         return new ProcessResult {
           ExitCode = process.ExitCode,
-          Output = output.ToString(),
-          Error = error.ToString(),
+          Output = finalOutput,
+          Error = finalError,
           TimedOut = false,
           DurationMilliseconds = stopwatch.ElapsedMilliseconds
         };
