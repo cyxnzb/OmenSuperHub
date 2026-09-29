@@ -4,8 +4,8 @@ on:
   pull_request:
     branches:
       - master
+      - audit-stability-20260918
   workflow_dispatch:
-
 
 jobs:
   build:
@@ -13,6 +13,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Repository hygiene guard
+        shell: pwsh
+        run: |
+          $trackedPfx = git ls-files "*.pfx"
+          if ($trackedPfx) {
+            Write-Error "Signing certificate files must not be committed: $trackedPfx"
+            exit 1
+          }
 
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
