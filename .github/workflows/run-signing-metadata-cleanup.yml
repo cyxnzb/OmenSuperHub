@@ -1,0 +1,33 @@
+name: Run Signing Metadata Cleanup
+
+on:
+  push:
+    branches:
+      - remove-stale-signing-metadata-20260929
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply cleanup
+        run: python tools/remove_stale_signing_metadata.py
+
+      - name: Verify project diff
+        run: git diff --check && git diff -- OmenSuperHub.csproj
+
+      - name: Commit project cleanup and remove temporary patch machinery
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add OmenSuperHub.csproj
+          git rm -f tools/remove_stale_signing_metadata.py
+          git rm -f .github/workflows/run-signing-metadata-cleanup.yml
+          git commit -m "Remove stale manifest signing metadata"
+          git push
