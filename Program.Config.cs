@@ -1403,10 +1403,11 @@ namespace OmenSuperHub {
         UpdateCheckedState("acLoadLineGroup", (180 - 10 * llVal).ToString());
       }
 
-      // TPP 延迟 1s 应用，避免与其他设置冲突。硬件写入留在线程池，
-      // UI 更新必须 marshal 回 WinForms 线程，且不能再次触发滑块硬件写入。
+      // TPP 延迟 1s 应用，避免与其他设置冲突。复用 keyed deferred apply，
+      // 这样快速切换预设或随后拖动 TPP 滑块时，旧预设的延迟写入会自动失效，
+      // 不会在新状态之后“迟到”并覆盖最终硬件值。
       string tppSnapshot = tppPower;
-      System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ => {
+      ScheduleLatestHardwareApply("tppPower", () => {
         int? trackValue = null;
         string checkedText = null;
 
@@ -1442,7 +1443,7 @@ namespace OmenSuperHub {
             // 应用退出/句柄销毁期间无需再刷新菜单。
           }
         }
-      });
+      }, 1000);
       } finally {
         suppressPerformanceSliderEvents = false;
       }
