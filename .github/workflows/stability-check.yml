@@ -1,0 +1,35 @@
+name: Stability Check
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Repository hygiene guard
+        shell: pwsh
+        run: |
+          $trackedPfx = git ls-files "*.pfx"
+          if ($trackedPfx) {
+            Write-Error "Signing certificate files must not be committed: $trackedPfx"
+            exit 1
+          }
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore packages
+        run: nuget restore OmenSuperHub.sln -NonInteractive
+
+      - name: Build Release x64
+        run: msbuild OmenSuperHub.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:RestorePackages=false
