@@ -203,9 +203,9 @@ namespace OmenSuperHub {
 
       if (powerTuningHighPerformanceItem != null) {
         powerTuningHighPerformanceItem.Text = PowerTuningText(
-          "应用高性能基础（Performance BIOS + GPU完整释放）",
-          "套用高效能基礎（Performance BIOS + GPU完整釋放）",
-          "Apply high-performance base (Performance BIOS + GPU full power)");
+          "切换到极致性能基础（Performance BIOS + GPU完整释放）",
+          "切換到極致效能基礎（Performance BIOS + GPU完整釋放）",
+          "Switch to Extreme base (Performance BIOS + GPU full power)");
         powerTuningHighPerformanceItem.Enabled = platformSettings != null || hasNVIDIAGpu;
       }
 
@@ -369,12 +369,16 @@ namespace OmenSuperHub {
 
     private static void ApplyHighPerformanceBase() {
       try {
-        if (platformSettings != null)
-          SetPerformanceMode();
-        if (hasNVIDIAGpu)
+        if (platformSettings != null) {
+          // Reuse the existing preset state machine so the UI, persisted preset and
+          // firmware performance mode stay aligned. The user can then lower CPU power
+          // from the simple control (for example to 130W) without bypassing #58 logic.
+          applyPresetLogic("PresetExtreme");
+        } else if (hasNVIDIAGpu) {
           ApplyGpuFullPowerCore();
+        }
       } catch (Exception ex) {
-        Logger.Error($"Apply high-performance power base failed: {ex.Message}");
+        Logger.Error($"Apply Extreme power base failed: {ex.Message}");
       }
       RefreshPowerTuningText();
     }
