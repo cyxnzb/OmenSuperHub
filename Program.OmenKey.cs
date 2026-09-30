@@ -250,6 +250,7 @@ namespace OmenSuperHub {
 
     static bool IsPresetAvailable(string presetKey) {
       switch (presetKey) {
+        case "PresetBalanced":
         case "PresetExtreme":
         case "PresetGpuPriority":
         case "PresetLightUse":

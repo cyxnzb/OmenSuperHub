@@ -100,17 +100,18 @@ namespace OmenSuperHub {
     static int textSize = 40;
     static int countRestore = 0, gpuClock = 0, gpuCoreOverclock = -1, gpuMemoryOverclock = -1, maxFrameRate = -1, graphicsBoostClock = 0;
     static int alreadyRead = 0, alreadyReadCode = 1000;
-    static readonly string[] PresetOrder = { "PresetExtreme", "PresetGpuPriority", "PresetLightUse", "PresetCustom1", "PresetCustom2", "PresetCustom3" };
-    static string currentPreset = "PresetCustom1", presetCustom1Name = Strings.PresetCustom1, presetCustom2Name = Strings.PresetCustom2, presetCustom3Name = Strings.PresetCustom3;
+    static readonly string[] PresetOrder = { "PresetBalanced", "PresetExtreme", "PresetGpuPriority", "PresetLightUse", "PresetCustom1", "PresetCustom2", "PresetCustom3" };
+    static string currentPreset = "PresetBalanced", presetCustom1Name = Strings.PresetCustom1, presetCustom2Name = Strings.PresetCustom2, presetCustom3Name = Strings.PresetCustom3;
     static string fanTable = "cool", fanControl = "auto", tempSensitivity = "high", tppPower = "null", iccMax = "null", acLoadline = "null", cpuPower = "null", tgpPower = "on", ppabPower = "on", dState = "normal", autoStart = "off", customIcon = "original", floatingBar = "off", floatingBarLoc = "left", floatingBarScreen = "", omenKey = OmenKeyActions.Default, omenKeyAppPath = "", omenKeyAppName = "", omenKeyShortcut = "", omenKeyPresetCandidates = "", dataLocalize = "off", appLanguage = "zh-CN", autoFanProtect = "on";
     static volatile bool monitorFan = false;
     static bool skipCheckedUpdate = false; // action 内拦截时置 true，阻止 CreateMenuItem 覆盖勾选
+    static bool suppressPerformanceSliderEvents = false; // 程序同步滑块时不触发硬件写入/持久化
     static bool showCPUTemp = true, showCPUPower = true, showCPUFrequency = false, showGPUTemp = true, showGPUPower = true, showGPUFrequency = false;
     static bool powerOnline = SystemInformation.PowerStatus.PowerLineStatus == PowerLineStatus.Online;
     static bool monitorCPU = true, monitorGPU = true, isConnectedToNVIDIA = true, prevIsConnectedToNVIDIA = true, omenKeyTriggered = false; // isTwoBytePL4 = false;
     static bool hasNVIDIAGpu; // 启动时一次性检测，硬件状态不会改变
     static string monitorRefreshRate = "low"; // 刷新频率：low=1s, high=0.25s
-    static List<int> fanSpeedNow = new List<int> { 20, 20, 0 };
+    static readonly List<int> fanSpeedNow = new List<int> { 20, 20, 0 };
     static float respondSpeed = 0.4f;
 
     static int? maxCPUTemp = null;
@@ -118,6 +119,16 @@ namespace OmenSuperHub {
     static float CPUTemp = 50, GPUTemp = 40, rawTempCPU = 50f, rawTempGPU = 40f;
     static float CPUPower = 0, GPUPower = 0, CPUFrequency = 0f, GPUFrequency = 0f, rawPowerCPU = 0f, rawPowerGPU = 0f, rawFrequencyCPU = 0f, rawFrequencyGPU = 0f;
     static bool rawGotGPU = false;
+    static DateTime lastCpuTempSampleUtc = DateTime.MinValue, lastGpuTempSampleUtc = DateTime.MinValue;
+    static DateTime lastCpuPowerSampleUtc = DateTime.MinValue, lastGpuPowerSampleUtc = DateTime.MinValue;
+    static DateTime lastCpuSmoothedSampleUtc = DateTime.MinValue, lastGpuSmoothedSampleUtc = DateTime.MinValue;
+    static readonly TimeSpan hardwareSampleTimeout = TimeSpan.FromSeconds(5);
+    static readonly object deferredHardwareApplyLock = new object();
+    static readonly Dictionary<string, int> deferredHardwareApplyVersions = new Dictionary<string, int>();
+    static int deferredHardwareApplyGeneration = 0;
+    const int AutoFanDeadband = 2;       // 200 RPM
+    const int AutoFanFallStep = 2;       // max -200 RPM per second when cooling down
+    static bool autoFanSensorFailsafeActive = false;
     static volatile bool tempReady = false;   // 子进程首次输出有效温度后置 true
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
@@ -127,6 +138,8 @@ namespace OmenSuperHub {
 
     // Cache last written values to avoid unnecessary disk reads/writes
     static string lastCpuText = null, lastGpuText = null, lastFanText = null, pawnIOState = "";
+    static int _isSyncingDataToTxt = 0;
+    static int _floatingUpdatePending = 0;
     static string tempDisplayMode = "smoothed"; // 温度显示方式：smoothed=平滑值, raw=原始值
     static int? platformMaxFanSpeed = null; // 平台最大转速（RPM），由LoadDefaultFanConfig获取后缓存
     static SortedDictionary<float, int> CPUTempFanMap = new SortedDictionary<float, int>();
@@ -230,12 +243,11 @@ namespace OmenSuperHub {
           //Console.WriteLine($"1.2: {sw.ElapsedMilliseconds}ms");
 
           if (platformSettings != null) {
-            currentPreset = "PresetExtreme";
+            currentPreset = "PresetBalanced";
             isCPUPowerControlSupported = true;
           }
           //isCPUPowerControlSupported = IsPowerControlSupported(deviceType); // 似乎不准确
           InitPlatformMaxFanSpeed();
-          InitMaxTemp();
         });
         var t2 = Task.Run(() => {
           biosVersion = GetBiosVersion();
@@ -251,7 +263,8 @@ namespace OmenSuperHub {
         var t4 = Task.Run(() => kbType = GetKeyboardType());
         var t5 = Task.Run(() => NvGraphicsMode = GetGfxMode());
         var t6 = Task.Run(() => {
-          SetUnleashMode(); // 固定为释放全部性能模式
+          // 启动阶段只探测能力。实际性能模式由 RestoreConfig/当前预设统一应用，
+          // 避免应用一启动就无条件切到 Unleash。
           Is3FanNb = IsThreeFanSupported();
         });
         var t7 = Task.Run(() => {
@@ -274,6 +287,8 @@ namespace OmenSuperHub {
 
         //Console.WriteLine($"1: {sw.ElapsedMilliseconds}ms");
         Task.WaitAll(t1, t2, t3, t4, t5, t6, t7, t8, t9);
+        // 平台/NVIDIA 探测完成后再读取温限，避免 hasNVIDIAGpu 的启动竞态。
+        InitMaxTemp();
         //Console.WriteLine($"2: {sw.ElapsedMilliseconds}ms");
 
         if (FourZoneSupportHelper.IsAnimationSupported(kbType, deviceType, cycleNumber)) {
@@ -295,16 +310,10 @@ namespace OmenSuperHub {
 
         // Main loop to query CPU and GPU temperature every second
         fanControlTimer = new System.Threading.Timer((e) => {
-          if (fanControl != "auto") return;
-          int fanSpeed = GetFanSpeedForTemperature() / 100;
-          if (fanSpeed < 0) return;
-          int s0, s1;
-          lock (fanSpeedNow) { s0 = fanSpeedNow[0]; s1 = fanSpeedNow[1]; }
-          if (Math.Abs(fanSpeed - s0) > 1 || Math.Abs(fanSpeed - s1) > 1) {
-            SetFanLevel(fanSpeed, fanSpeed, Is3FanNb);
-            if (!monitorFan) {
-              lock (fanSpeedNow) { fanSpeedNow[0] = fanSpeed; fanSpeedNow[1] = fanSpeed; }
-            }
+          try {
+            ApplyAutomaticFanControl();
+          } catch (Exception ex) {
+            Logger.Error($"Automatic fan control failed: {ex.Message}");
           }
         }, null, 100, 1000);
 
@@ -520,6 +529,14 @@ namespace OmenSuperHub {
       isConnectedToNVIDIA = true;
     }
 
+    static bool IsPlausibleTemperature(float value) {
+      return !float.IsNaN(value) && !float.IsInfinity(value) && value > 0f && value < 130f;
+    }
+
+    static bool IsPlausiblePower(float value) {
+      return !float.IsNaN(value) && !float.IsInfinity(value) && value >= 0f && value < 9999f;
+    }
+
     [HandleProcessCorruptedStateExceptions]
     static void RunHardwareMonitor() {
       bool isEnabled = false;
@@ -534,26 +551,35 @@ namespace OmenSuperHub {
       }
       //Console.Error.WriteLine("CRASH: " + $"3: {sw.ElapsedMilliseconds}ms");
       int sleepMs = 1000;
+      var computerLock = new object();
 
       var readThread = new Thread(() => {
         while (true) {
           string line = Console.ReadLine();
           if (line == null) Environment.Exit(0);
           if (line == "GPU:ON") {
-            isEnabled = false;
-            computer.IsGpuEnabled = true;
-            isEnabled = true;
+            lock (computerLock) {
+              Volatile.Write(ref isEnabled, false);
+              computer.IsGpuEnabled = true;
+              Volatile.Write(ref isEnabled, true);
+            }
           }
           if (line == "GPU:OFF") {
-            computer.IsGpuEnabled = false;
+            lock (computerLock) {
+              computer.IsGpuEnabled = false;
+            }
           }
           if (line == "CPU:ON") {
-            isEnabled = false;
-            computer.IsCpuEnabled = true;
-            isEnabled = true;
+            lock (computerLock) {
+              Volatile.Write(ref isEnabled, false);
+              computer.IsCpuEnabled = true;
+              Volatile.Write(ref isEnabled, true);
+            }
           }
           if (line == "CPU:OFF") {
-            computer.IsCpuEnabled = false;
+            lock (computerLock) {
+              computer.IsCpuEnabled = false;
+            }
           }
           if (line.StartsWith("INTERVAL:") && int.TryParse(line.Substring(9), out int ms) && ms > 0)
             sleepMs = ms;
@@ -562,22 +588,22 @@ namespace OmenSuperHub {
       readThread.IsBackground = true;
       readThread.Start();
 
-      float tCpu = 50, pCpu = 0, tGpu = 40, pGpu = 0;
-
-      while (!isEnabled) {
-        Thread.Sleep(1);
-      }
-      // 等待可能的第二个监控打开
-      Thread.Sleep(1);
-      while (!isEnabled) {
+      while (!Volatile.Read(ref isEnabled)) {
         Thread.Sleep(1);
       }
       //Console.Error.WriteLine("CRASH: " + $"4: {sw.ElapsedMilliseconds}ms");
       while (true) {
         bool gGpu = false;
         bool exactCpuClockFound = false;
+        int cpuTempPriority = 0;
+        float cpuFallbackTempSum = 0f;
+        float cpuFallbackTempMax = float.MinValue;
+        int cpuFallbackTempCount = 0;
+        float? tCpuSample = null, tGpuSample = null;
+        float pCpu = -1f, pGpu = -1f;
         float fCpu = 0, fGpu = 0;
         try {
+          lock (computerLock) {
           foreach (LibreIHardware hw in computer.Hardware) {
             if (hw.HardwareType != LibreHardwareType.Cpu && hw.HardwareType != LibreHardwareType.GpuNvidia && hw.HardwareType != LibreHardwareType.GpuAmd) continue;
 
@@ -593,10 +619,43 @@ namespace OmenSuperHub {
             foreach (LibreISensor sensor in hw.Sensors) {
               try {
                 if (hw.HardwareType == LibreHardwareType.Cpu) {
-                  if (sensor.SensorType == LibreSensorType.Temperature && (sensor.Name.Contains("Package") || sensor.Name.Contains("Tctl/Tdie")))
-                    tCpu = sensor.Value.GetValueOrDefault();
-                  if (sensor.SensorType == LibreSensorType.Power && sensor.Name.Contains("Package"))
-                    pCpu = sensor.Value.GetValueOrDefault();
+                  if (sensor.SensorType == LibreSensorType.Temperature && sensor.Value.HasValue) {
+                    float value = sensor.Value.Value;
+                    if (IsPlausibleTemperature(value)) {
+                      // Prefer aggregate/control temperatures exposed by LibreHardwareMonitor.
+                      // Intel normally exposes CPU Package. AMD Zen may expose Core (Tctl),
+                      // Core (Tdie), Core (Tctl/Tdie) and CCDs Max (Tdie) depending on generation.
+                      // Do not average those together: doing so can bias the control temperature low.
+                      string sensorName = sensor.Name ?? "";
+                      int priority =
+                          string.Equals(sensorName, "CPU Package", StringComparison.OrdinalIgnoreCase) ? 6 :
+                          sensorName.IndexOf("Tctl/Tdie", StringComparison.OrdinalIgnoreCase) >= 0 ? 6 :
+                          sensorName.IndexOf("(Tctl)", StringComparison.OrdinalIgnoreCase) >= 0 ? 5 :
+                          sensorName.IndexOf("CCDs Max", StringComparison.OrdinalIgnoreCase) >= 0 ? 4 :
+                          sensorName.IndexOf("Core Max", StringComparison.OrdinalIgnoreCase) >= 0 ? 4 :
+                          sensorName.IndexOf("(Tdie)", StringComparison.OrdinalIgnoreCase) >= 0 ? 3 :
+                          sensorName.IndexOf("Package", StringComparison.OrdinalIgnoreCase) >= 0 ? 2 :
+                          sensorName.IndexOf("Core Average", StringComparison.OrdinalIgnoreCase) >= 0 ? 1 : 0;
+
+                      if (priority > cpuTempPriority) {
+                        tCpuSample = value;
+                        cpuTempPriority = priority;
+                      } else if (priority == 0 &&
+                                 sensorName.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) < 0) {
+                        // Last-resort fallback for unusual CPUs with no aggregate sensor.
+                        // Blend average and hottest core rather than taking either extreme:
+                        // average alone can under-report a hot core, while raw max can overreact
+                        // to a one-sample spike.
+                        cpuFallbackTempSum += value;
+                        cpuFallbackTempMax = Math.Max(cpuFallbackTempMax, value);
+                        cpuFallbackTempCount++;
+                      }
+                    }
+                  }
+                  if (sensor.SensorType == LibreSensorType.Power && sensor.Name.Contains("Package") && sensor.Value.HasValue) {
+                    float value = sensor.Value.Value;
+                    if (IsPlausiblePower(value)) pCpu = value;
+                  }
                   if (sensor.SensorType == LibreSensorType.Clock && sensor.Value.HasValue) {
                     if (sensor.Name == "CPU Core" || sensor.Name == "CPU Core #1") {
                       fCpu = sensor.Value.GetValueOrDefault();
@@ -606,16 +665,13 @@ namespace OmenSuperHub {
                     }
                   }
                 } else if (hw.HardwareType == LibreHardwareType.GpuNvidia || hw.HardwareType == LibreHardwareType.GpuAmd) {
-                  if (sensor.SensorType == LibreSensorType.Temperature && sensor.Name == "GPU Core")
-                    tGpu = sensor.Value.GetValueOrDefault();
-                  if (sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package") {
-                    if (sensor.Value.HasValue) {
-                      pGpu = sensor.Value.GetValueOrDefault();
-                      gGpu = true;
-                    } else {
-                      pGpu = -1;
-                      gGpu = false;
-                    }
+                  if (sensor.SensorType == LibreSensorType.Temperature && sensor.Name == "GPU Core" && sensor.Value.HasValue) {
+                    float value = sensor.Value.Value;
+                    if (IsPlausibleTemperature(value)) tGpuSample = value;
+                  }
+                  if (sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
+                    float value = sensor.Value.Value;
+                    if (IsPlausiblePower(value)) pGpu = value;
                   }
                   if (sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue)
                     fGpu = sensor.Value.GetValueOrDefault();
@@ -623,7 +679,17 @@ namespace OmenSuperHub {
               } catch { }
             }
           }
-          Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0:F2};{1:F2};{2:F2};{3:F2};{4};{5:F2};{6:F2}", tCpu, pCpu, tGpu, pGpu, gGpu ? 1 : 0, fCpu, fGpu));
+          }
+          if (!tCpuSample.HasValue && cpuFallbackTempCount > 0) {
+            float fallbackAverage = cpuFallbackTempSum / cpuFallbackTempCount;
+            // 75% average + 25% hottest core: conservative enough to catch asymmetric
+            // core heating without making a single transient core fully dictate the fan.
+            tCpuSample = fallbackAverage * 0.75f + cpuFallbackTempMax * 0.25f;
+          }
+          gGpu = tGpuSample.HasValue;
+          float outCpuTemp = tCpuSample ?? -1f;
+          float outGpuTemp = tGpuSample ?? -1f;
+          Console.WriteLine(string.Format(CultureInfo.InvariantCulture, "{0:F2};{1:F2};{2:F2};{3:F2};{4};{5:F2};{6:F2}", outCpuTemp, pCpu, outGpuTemp, pGpu, gGpu ? 1 : 0, fCpu, fGpu));
         } catch (Exception ex) {
           Console.Error.WriteLine("CRASH: " + ex.Message);
           Environment.Exit(1);
@@ -654,37 +720,66 @@ namespace OmenSuperHub {
         if (e.Data.StartsWith("CRASH:")) return;
         var parts = e.Data.Split(';');
         if (parts.Length == 5 || parts.Length == 7) {
-          if (float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float tc)) rawTempCPU = tc;
-          if (float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float pc) && pc < 9999) rawPowerCPU = pc;
-          if (float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float tg)) rawTempGPU = tg;
-          if (float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float pg)) rawPowerGPU = pg;
-          rawGotGPU = parts[4] == "1";
-          rawFrequencyCPU = 0f;
-          rawFrequencyGPU = 0f;
-          if (parts.Length == 7) {
-            if (float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out float fc)) rawFrequencyCPU = fc;
-            if (float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out float fg)) rawFrequencyGPU = fg;
+          DateTime sampleUtc = DateTime.UtcNow;
+
+          bool cpuTempValid = float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float tc) && IsPlausibleTemperature(tc);
+          bool cpuPowerValid = float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float pc) && IsPlausiblePower(pc);
+          float tg = 0f;
+          bool gpuTempValid = parts[4] == "1" &&
+              float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out tg) && IsPlausibleTemperature(tg);
+          bool gpuPowerValid = float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float pg) && IsPlausiblePower(pg);
+
+          if (cpuTempValid) {
+            rawTempCPU = tc;
+            lastCpuTempSampleUtc = sampleUtc;
+            if (!cpuTempReady) {
+              smoothedCPUTemp = rawTempCPU;
+              cpuTempReady = true;
+            }
           }
-          // 首次收到数据时，初始化对应传感器的平滑温度
-          if (!cpuTempReady) {
-            smoothedCPUTemp = rawTempCPU;
-            cpuTempReady = true;
+          if (cpuPowerValid) {
+            rawPowerCPU = pc;
+            lastCpuPowerSampleUtc = sampleUtc;
           }
-          if (!gpuTempReady && rawGotGPU) {
-            smoothedGPUTemp = rawTempGPU;
-            gpuTempReady = true;
+
+          if (gpuTempValid) {
+            rawTempGPU = tg;
+            lastGpuTempSampleUtc = sampleUtc;
+            rawGotGPU = true;
+            if (!gpuTempReady) {
+              smoothedGPUTemp = rawTempGPU;
+              gpuTempReady = true;
+            }
           }
-          if (!rawGotGPU) {
+          if (gpuPowerValid) {
+            rawPowerGPU = pg;
+            lastGpuPowerSampleUtc = sampleUtc;
+          }
+
+          if (cpuTempReady && sampleUtc - lastCpuTempSampleUtc > hardwareSampleTimeout)
+            cpuTempReady = false;
+
+          if (gpuTempReady && sampleUtc - lastGpuTempSampleUtc > hardwareSampleTimeout) {
             gpuTempReady = false;
+            rawGotGPU = false;
             GPUTemp = 40;
             GPUPower = 0;
             rawFrequencyGPU = 0f;
             GPUFrequency = 0f;
           }
 
-          if (!tempReady) {
+          rawFrequencyCPU = 0f;
+          rawFrequencyGPU = 0f;
+          if (parts.Length == 7) {
+            if (float.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out float fc) && !float.IsNaN(fc) && !float.IsInfinity(fc) && fc >= 0f)
+              rawFrequencyCPU = fc;
+            if (float.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out float fg) && !float.IsNaN(fg) && !float.IsInfinity(fg) && fg >= 0f)
+              rawFrequencyGPU = fg;
+          }
+
+          if (!tempReady && (cpuTempReady || gpuTempReady)) {
             tempReady = true;
-            // 首次获取到数据立即刷新
+            // 首次获取到有效数据立即刷新
             try {
               QueryHardware();
             } catch (Exception ex) {
@@ -710,6 +805,12 @@ namespace OmenSuperHub {
           hwMonitorStopping = false;
           return;
         }
+        cpuTempReady = false;
+        gpuTempReady = false;
+        rawGotGPU = false;
+        tempReady = false;
+        lastCpuSmoothedSampleUtc = DateTime.MinValue;
+        lastGpuSmoothedSampleUtc = DateTime.MinValue;
         //Logger.Info("StartHardwareMonitor [HWMonitor] 进程退出，准备重启...");
         System.Threading.Tasks.Task.Delay(3000).ContinueWith(_ => {
           try { StartHardwareMonitor(); } catch { }
@@ -759,10 +860,13 @@ namespace OmenSuperHub {
         flagStart++;
         if (fanControl.Contains("max")) {
           SetMaxFanSpeedOn();
-        } else if (fanControl.Contains(" RPM")) {
+        } else if (TryParseFanRpmSetting(fanControl, out int rpmValue)) {
           SetMaxFanSpeedOff();
-          int rpmValue = int.Parse(fanControl.Replace(" RPM", "").Trim());
           SetFanLevel(rpmValue / 100, rpmValue / 100, Is3FanNb);
+        } else if (fanControl.Contains("RPM")) {
+          fanControl = "auto";
+          SetMaxFanSpeedOff();
+          fanControlTimer?.Change(0, 1000);
         }
       }
 
@@ -964,7 +1068,13 @@ namespace OmenSuperHub {
 
           // 转换为图标
           IntPtr hIcon = bitmap.GetHicon();
-          Icon newIcon = Icon.FromHandle(hIcon);
+          Icon newIcon;
+          using (Icon borrowedIcon = Icon.FromHandle(hIcon)) {
+            // Icon.FromHandle does not own the native handle. Clone it before DestroyIcon.
+            newIcon = (Icon)borrowedIcon.Clone();
+          }
+          DestroyIcon(hIcon);
+
           // 替换托盘图标
           Icon oldIcon = trayIcon.Icon;
           trayIcon.Icon = newIcon;
@@ -972,8 +1082,6 @@ namespace OmenSuperHub {
           if (oldIcon != null && oldIcon != Properties.Resources.smallfan) {
             oldIcon.Dispose();
           }
-          // 销毁旧句柄（注意：不能直接销毁，因为 Icon.FromHandle 需要手动释放）
-          DestroyIcon(hIcon);
         }
       }
     }
@@ -987,8 +1095,16 @@ namespace OmenSuperHub {
         Logger.Error($"[UpdateTooltip] QueryHardware 异常: {ex.Message}");
       }
 
-      if (monitorFan)
-        fanSpeedNow = GetFanLevel();
+      if (monitorFan) {
+        var latestFanSpeed = GetFanLevel();
+        if (latestFanSpeed != null && latestFanSpeed.Count >= 3) {
+          lock (fanSpeedNow) {
+            fanSpeedNow[0] = latestFanSpeed[0];
+            fanSpeedNow[1] = latestFanSpeed[1];
+            fanSpeedNow[2] = latestFanSpeed[2];
+          }
+        }
+      }
 
       UpdateTrayIconText();
       //Console.WriteLine("UpdateTooltip");
@@ -1095,21 +1211,19 @@ namespace OmenSuperHub {
 
     static void SyncDataToTxt() {
       if (dataLocalize != "on") return;
+      if (Interlocked.CompareExchange(ref _isSyncingDataToTxt, 1, 0) != 0) return;
+
+      string cpuText = ((int)Math.Round(CPUTemp)).ToString();
+      string gpuText = ((int)Math.Round(GPUTemp)).ToString();
+      string fanText;
+      lock (fanSpeedNow) {
+        fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
+      }
+
       System.Threading.Tasks.Task.Run(() => {
         try {
-          // 获取程序根目录
           string basePath = AppDomain.CurrentDomain.BaseDirectory;
 
-          // 将浮点数转换为整数并转换为文本
-          string cpuText = ((int)Math.Round(CPUTemp)).ToString();
-          string gpuText = ((int)Math.Round(GPUTemp)).ToString();
-          string fanText;
-          // brief lock to avoid potential race on the list
-          lock (fanSpeedNow) {
-            fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
-          }
-
-          // 仅当与上次内存中保存的值不同时才写入磁盘，避免不必要的 I/O
           try {
             if (lastCpuText == null || lastCpuText != cpuText) {
               File.WriteAllText(Path.Combine(basePath, "cpu_temp.txt"), cpuText);
@@ -1136,12 +1250,58 @@ namespace OmenSuperHub {
           } catch (Exception ex) {
             Logger.Error($"Sync error when writing fan_rpm.txt: {ex.Message}");
           }
-
         } catch (Exception ex) {
-          // 忽略文件被占用的偶发错误，或者在这里记录日志
           Logger.Error("Sync error: " + ex.Message);
+        } finally {
+          Interlocked.Exchange(ref _isSyncingDataToTxt, 0);
         }
       });
+    }
+
+    static void CancelPendingHardwareApplies() {
+      lock (deferredHardwareApplyLock) {
+        deferredHardwareApplyGeneration++;
+      }
+    }
+
+    static void ScheduleLatestHardwareApply(string key, Action action, int delayMs = 200) {
+      int version;
+      int generation;
+      lock (deferredHardwareApplyLock) {
+        deferredHardwareApplyVersions.TryGetValue(key, out int currentVersion);
+        version = currentVersion + 1;
+        deferredHardwareApplyVersions[key] = version;
+        generation = deferredHardwareApplyGeneration;
+      }
+
+      System.Threading.Tasks.Task.Run(async () => {
+        await System.Threading.Tasks.Task.Delay(delayMs);
+        lock (deferredHardwareApplyLock) {
+          if (generation != deferredHardwareApplyGeneration ||
+              !deferredHardwareApplyVersions.TryGetValue(key, out int currentVersion) ||
+              currentVersion != version)
+            return;
+        }
+
+        try {
+          action();
+        } catch (Exception ex) {
+          Logger.Error($"Deferred hardware apply ({key}) failed: {ex.Message}");
+        }
+      });
+    }
+
+    static void ApplyHardwareSettingNow(string key, Action action) {
+      lock (deferredHardwareApplyLock) {
+        deferredHardwareApplyVersions.TryGetValue(key, out int currentVersion);
+        deferredHardwareApplyVersions[key] = currentVersion + 1;
+      }
+
+      try {
+        action();
+      } catch (Exception ex) {
+        Logger.Error($"Hardware apply ({key}) failed: {ex.Message}");
+      }
     }
 
     // 硬件传感器查询
@@ -1153,22 +1313,58 @@ namespace OmenSuperHub {
     static float smoothedCPUTemp = 50f;
     static float smoothedGPUTemp = 40f;
 
+    static float SmoothTemperatureSample(float rawValue, float previousValue, float response,
+                                         DateTime sampleUtc, ref DateTime lastSmoothedSampleUtc) {
+      if (sampleUtc == DateTime.MinValue || sampleUtc <= lastSmoothedSampleUtc)
+        return previousValue;
+
+      if (lastSmoothedSampleUtc == DateTime.MinValue || response >= 0.999f) {
+        lastSmoothedSampleUtc = sampleUtc;
+        return rawValue;
+      }
+
+      double elapsedSeconds = Math.Max(0.05, Math.Min(5.0, (sampleUtc - lastSmoothedSampleUtc).TotalSeconds));
+
+      // Normalize smoothing to real elapsed time so changing the monitor/UI refresh rate
+      // does not secretly change the thermal controller's effective response.
+      double baseRetention = Math.Max(0.0, Math.Min(0.999999, 1.0 - response));
+      float alpha = (float)(1.0 - Math.Pow(baseRetention, elapsedSeconds));
+      lastSmoothedSampleUtc = sampleUtc;
+      return rawValue * alpha + previousValue * (1.0f - alpha);
+    }
+
     static void QueryHardware() {
       // 防止定时器重入：上次查询未完成时直接跳过本次
       if (Interlocked.CompareExchange(ref _isQuerying, 1, 0) != 0)
         return;
 
+      try {
       float tempCPU = rawTempCPU;
       bool getGPU = false;
 
+      DateTime queryUtc = DateTime.UtcNow;
+
+      // 即使监控子进程只是“卡住”而没有退出，也不能无限展示/使用最后一次温度。
+      if (cpuTempReady && !IsFresh(lastCpuTempSampleUtc)) {
+        cpuTempReady = false;
+        CPUPower = 0f;
+        CPUFrequency = 0f;
+      }
+      if (gpuTempReady && !IsFresh(lastGpuTempSampleUtc)) {
+        gpuTempReady = false;
+        rawGotGPU = false;
+        GPUPower = 0f;
+        GPUFrequency = 0f;
+      }
+
       if (monitorCPU && cpuTempReady) {
-        CPUPower = rawPowerCPU;
+        CPUPower = queryUtc - lastCpuPowerSampleUtc <= hardwareSampleTimeout ? rawPowerCPU : 0f;
         CPUFrequency = rawFrequencyCPU;
       }
       if (monitorGPU) {
         getGPU = rawGotGPU;
         if (getGPU) {
-          if ((int)(rawPowerGPU * 10) == 5900)
+          if (queryUtc - lastGpuPowerSampleUtc > hardwareSampleTimeout || (int)(rawPowerGPU * 10) == 5900)
             GPUPower = 0;
           else
             GPUPower = rawPowerGPU;
@@ -1178,12 +1374,15 @@ namespace OmenSuperHub {
         }
       }
 
-      // 每次调用都直接平滑（不再做1s均值），风扇响应速度由respondSpeed本身控制
+      // 只在拿到新的温度样本时平滑，并按真实采样间隔换算 alpha。
+      // 监控界面刷新率不应改变风扇控制器的热响应语义。
       if (monitorCPU && cpuTempReady) {
-        smoothedCPUTemp = tempCPU * respondSpeed + smoothedCPUTemp * (1.0f - respondSpeed);
+        smoothedCPUTemp = SmoothTemperatureSample(
+            tempCPU, smoothedCPUTemp, respondSpeed, lastCpuTempSampleUtc, ref lastCpuSmoothedSampleUtc);
       }
       if (monitorGPU && gpuTempReady) {
-        smoothedGPUTemp = rawTempGPU * respondSpeed + smoothedGPUTemp * (1.0f - respondSpeed);
+        smoothedGPUTemp = SmoothTemperatureSample(
+            rawTempGPU, smoothedGPUTemp, respondSpeed, lastGpuTempSampleUtc, ref lastGpuSmoothedSampleUtc);
       }
 
       // 根据显示方式决定展示原始值或平滑值
@@ -1193,7 +1392,13 @@ namespace OmenSuperHub {
         GPUTemp = (tempDisplayMode == "raw") ? rawTempGPU : smoothedGPUTemp;
 
       int currentMaxCPUTemp = maxCPUTemp ?? 97;
-      if (autoFanProtect == "on" && platformMaxFanSpeed.HasValue && (monitorCPU || monitorGPU) && smoothedCPUTemp > currentMaxCPUTemp - 2 && fanControl.Contains(" RPM")) {
+      int currentMaxGPUTemp = maxGPUTemp ?? 87;
+      bool cpuProtectionTriggered = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc) &&
+                                    rawTempCPU > currentMaxCPUTemp - 2;
+      bool gpuProtectionTriggered = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc) &&
+                                    rawTempGPU > currentMaxGPUTemp - 2;
+      if (autoFanProtect == "on" && platformMaxFanSpeed.HasValue &&
+          (cpuProtectionTriggered || gpuProtectionTriggered) && fanControl.Contains(" RPM")) {
         // 检查是否满足转速低于平台最大转速80%的条件
         bool fanSpeedCondition = true;
         if (platformMaxFanSpeed.Value > 0) {
@@ -1216,8 +1421,10 @@ namespace OmenSuperHub {
           UpdateCheckedState("fanControlGroup", Strings.FanAuto);
           SaveConfig("FanControl");
 
+          int protectionLimit = gpuProtectionTriggered ? currentMaxGPUTemp : currentMaxCPUTemp;
+          float protectionTemp = gpuProtectionTriggered ? rawTempGPU : rawTempCPU;
           trayIcon.BalloonTipTitle = Strings.HighTempBalloonTitle;
-          trayIcon.BalloonTipText = Strings.HighTempBalloonText(currentMaxCPUTemp, smoothedCPUTemp);
+          trayIcon.BalloonTipText = Strings.HighTempBalloonText(protectionLimit, protectionTemp);
           trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
           trayIcon.ShowBalloonTip(3000);
         }
@@ -1288,9 +1495,10 @@ namespace OmenSuperHub {
       //}
 
       prevIsConnectedToNVIDIA = isConnectedToNVIDIA;
-
-      // 释放防重入标志
-      Interlocked.Exchange(ref _isQuerying, 0);
+      } finally {
+        // Never leave the query path permanently disabled after a transient UI/WMI exception.
+        Interlocked.Exchange(ref _isQuerying, 0);
+      }
     }
 
     // Helper function to calculate fan speed for a specific temperature map
@@ -1312,6 +1520,74 @@ namespace OmenSuperHub {
       int upperSpeed = tempFanMap[upperKey];
       float interpolated = lowerSpeed + (upperSpeed - lowerSpeed) * (temperature - lowerKey) / (upperKey - lowerKey);
       return (int)interpolated;
+    }
+
+    static bool IsFresh(DateTime sampleUtc) {
+      return sampleUtc != DateTime.MinValue && DateTime.UtcNow - sampleUtc <= hardwareSampleTimeout;
+    }
+
+    static bool IsEmergencyThermalState() {
+      int cpuLimit = maxCPUTemp ?? 97;
+      int gpuLimit = maxGPUTemp ?? 87;
+      bool cpuHot = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc) && rawTempCPU >= cpuLimit - 3;
+      bool gpuHot = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc) && rawTempGPU >= gpuLimit - 3;
+      return cpuHot || gpuHot;
+    }
+
+    static void ApplyAutomaticFanControl() {
+      if (fanControl != "auto") return;
+
+      int targetRpm = GetFanSpeedForTemperature();
+      if (targetRpm < 0) {
+        bool hadValidTemperature = lastCpuTempSampleUtc != DateTime.MinValue || lastGpuTempSampleUtc != DateTime.MinValue;
+        bool hasFreshTemperature =
+            (monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) ||
+            (monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc));
+
+        // 启动阶段尚未拿到首个样本时不制造满转噪音；一旦曾经正常工作后温度源持续失效，
+        // 则优先安全，交给 BIOS 最大风扇模式，直到有效温度恢复。
+        if (hadValidTemperature && !hasFreshTemperature && !autoFanSensorFailsafeActive) {
+          SetMaxFanSpeedOn();
+          autoFanSensorFailsafeActive = true;
+          Logger.Error("Automatic fan control lost all fresh temperature sources; max-fan failsafe enabled.");
+        }
+        return;
+      }
+
+      if (autoFanSensorFailsafeActive) {
+        SetMaxFanSpeedOff();
+        autoFanSensorFailsafeActive = false;
+        Logger.Info("Automatic fan temperature source recovered; max-fan failsafe disabled.");
+      }
+
+      int target = Math.Max(0, Math.Min(255, targetRpm / 100));
+      int current;
+      lock (fanSpeedNow) {
+        current = Math.Max(0, Math.Min(255, (fanSpeedNow[0] + fanSpeedNow[1]) / 2));
+      }
+
+      bool emergency = IsEmergencyThermalState();
+      if (emergency && platformMaxFanSpeed.HasValue)
+        target = Math.Max(target, Math.Min(255, platformMaxFanSpeed.Value / 100));
+
+      int delta = target - current;
+      if (!emergency && Math.Abs(delta) <= AutoFanDeadband) return;
+
+      int next = target;
+      if (!emergency && delta < 0) {
+        // Heating must win over acoustics: ramp up to the calculated target immediately,
+        // matching the original controller's thermal response. Only slow the ramp-down
+        // to prevent fan hunting after short temperature spikes.
+        next = current - Math.Min(Math.Abs(delta), AutoFanFallStep);
+      }
+
+      SetFanLevel(next, next, Is3FanNb);
+      if (!monitorFan) {
+        lock (fanSpeedNow) {
+          fanSpeedNow[0] = next;
+          fanSpeedNow[1] = next;
+        }
+      }
     }
 
     // 根据 floatingBarScreen 获取目标显示器，找不到时回退主屏幕
@@ -1357,16 +1633,31 @@ namespace OmenSuperHub {
 
       if (form == null || form.IsDisposed) return;
 
-      lock (_floatingLock) {
-        if (floatingForm == null || floatingForm.IsDisposed) return;
-        // debug模式下需取消注释，release模式下需注释以避免打断右键菜单
-        // if (floatingForm.InvokeRequired) {
-        //  floatingForm.BeginInvoke(new System.Action(() => UpdateFloatingText()));
-        //  return;
-        // }
-        floatingForm.TopMost = true;
-        floatingForm.SetText(monitorText(), textSize, floatingBarLoc, GetFloatingScreen());
+      string text = monitorText();
+      int size = textSize;
+      string location = floatingBarLoc;
+      Screen screen = GetFloatingScreen();
+
+      if (form.InvokeRequired) {
+        if (Interlocked.CompareExchange(ref _floatingUpdatePending, 1, 0) != 0) return;
+        try {
+          form.BeginInvoke(new Action(() => {
+            try {
+              if (form.IsDisposed) return;
+              form.TopMost = true;
+              form.SetText(text, size, location, screen);
+            } finally {
+              Interlocked.Exchange(ref _floatingUpdatePending, 0);
+            }
+          }));
+        } catch (InvalidOperationException) {
+          Interlocked.Exchange(ref _floatingUpdatePending, 0);
+        }
+        return;
       }
+
+      form.TopMost = true;
+      form.SetText(text, size, location, screen);
     }
 
     //生成监控信息
@@ -1425,6 +1716,7 @@ namespace OmenSuperHub {
 
     static string GetPresetDisplayName(string presetKey) {
       switch (presetKey) {
+        case "PresetBalanced": return Strings.PresetBalanced;
         case "PresetExtreme": return Strings.PresetExtreme;
         case "PresetGpuPriority": return Strings.PresetGpuPriority;
         case "PresetLightUse": return Strings.PresetLightUse;

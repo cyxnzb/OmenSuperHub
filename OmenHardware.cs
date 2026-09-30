@@ -9,6 +9,9 @@ using static HP.Omen.Core.Model.Device.Models.GraphicsSwitcherHelper;
 
 namespace OmenSuperHub {
   internal class OmenHardware {
+    // HP BIOS WMI calls share a firmware endpoint. Serialize access so startup tasks,
+    // fan control and UI changes cannot race each other and produce intermittent failures.
+    private static readonly object _biosWmiLock = new object();
     private static bool? _isGamingProduct;
     public static string Validation(string displayName) {
       if (IsGamingProduct(displayName)) {
@@ -90,6 +93,16 @@ namespace OmenSuperHub {
         return -1;
       }
       return data[0] | (data[1] << 8);
+    }
+
+    // SystemDesignData[8] 对应平台默认 Concurrent TDP。
+    // 返回 -1 表示当前平台/BIOS未提供可靠默认值。
+    public static int GetDefaultConcurrentTdp() {
+      byte[] data = GetSystemDesignData();
+      if (data == null || data.Length <= 8 || data[8] == 0) {
+        return -1;
+      }
+      return data[8];
     }
 
     // 解析并输出 SystemDesignData (128字节) 的关键比特位含义
@@ -347,8 +360,10 @@ namespace OmenSuperHub {
     // 通过环境传感器温度来预估CPU温度
     public static float GetFittingTemperature() {
       float temp = GetSensorTemperature(1);
+      // WMI failures return -1. Never turn an invalid ambient sample into a fan target.
+      if (temp < 0 || temp > 100) return -1;
       if (temp < 25) return temp;
-      else return temp * 1.2f - 5;
+      return temp * 1.2f - 5;
     }
 
     /// <param name="ocp">输出：是否触发过流保护 (Bit 0)</param>
@@ -371,20 +386,14 @@ namespace OmenSuperHub {
     }
 
     public static List<int> GetFanLevel() {
-      // Send command to retrieve fan speed
-      List<int> fanSpeedNow = new List<int> { 0, 0, 0 };
+      // A failed BIOS read must not be represented as 0 RPM; zero is a valid fan value.
       byte[] fanLevel = SendOmenBiosWmi(0x2D, new byte[] { 0x00, 0x00, 0x00, 0x00 }, 128);
-      if (fanLevel != null) {
-        if (fanLevel.Length >= 3) {
-          fanSpeedNow[0] = fanLevel[0];
-          fanSpeedNow[1] = fanLevel[1];
-          fanSpeedNow[2] = fanLevel[2];
-        }
-        else {
-          Logger.Error($": GetFanLevel:- Failed: Error  length={fanLevel.Length}");
-        }
+      if (fanLevel == null || fanLevel.Length < 3) {
+        Logger.Error($": GetFanLevel:- Failed: Error length={(fanLevel == null ? 0 : fanLevel.Length)}");
+        return null;
       }
-      return fanSpeedNow;
+
+      return new List<int> { fanLevel[0], fanLevel[1], fanLevel[2] };
     }
 
     public static byte[] GetFanTable() {
@@ -509,21 +518,30 @@ namespace OmenSuperHub {
     }
 
     public static void SetFanLevel(int fanSpeed1, int fanSpeed2, bool fan3 = false, bool fanClean = false) {
+      // Fan commands are encoded as bytes. Clamp before casting so malformed custom
+      // curves cannot wrap (for example 300 -> 44) and accidentally lower fan speed.
+      int maxBaseValue = fanClean ? 127 : 255;
+      fanSpeed1 = Math.Max(0, Math.Min(maxBaseValue, fanSpeed1));
+      fanSpeed2 = Math.Max(0, Math.Min(maxBaseValue, fanSpeed2));
+
       byte[] data = new byte[fan3 ? 3 : 2];
       if (fanClean) {
-        GetFanType(out var types, out var Capabilities);
-        var caps = Capabilities.Take(types.Count).ToList();
-        data[0] = (byte)(caps[0] ? fanSpeed1 + 128 : fanSpeed1);
-        data[1] = (byte)(caps[1] ? fanSpeed2 + 128 : fanSpeed2);
+        GetFanType(out var types, out var capabilities);
+        var caps = capabilities.Take(types.Count).ToList();
+        bool cap0 = caps.Count > 0 && caps[0];
+        bool cap1 = caps.Count > 1 && caps[1];
+        data[0] = (byte)(cap0 ? fanSpeed1 + 128 : fanSpeed1);
+        data[1] = (byte)(cap1 ? fanSpeed2 + 128 : fanSpeed2);
         if (fan3) {
-          int fan3Speed = (fanSpeed1 + fanSpeed2) / 2;
-          data[2] = (byte)(caps[2] ? fan3Speed + 128 : fan3Speed);
+          int fan3Speed = Math.Max(0, Math.Min(maxBaseValue, (fanSpeed1 + fanSpeed2) / 2));
+          bool cap2 = caps.Count > 2 && caps[2];
+          data[2] = (byte)(cap2 ? fan3Speed + 128 : fan3Speed);
         }
       } else {
         data[0] = (byte)fanSpeed1;
         data[1] = (byte)fanSpeed2;
         if (fan3) {
-          data[2] = (byte)((fanSpeed1 + fanSpeed2) / 2);
+          data[2] = (byte)Math.Max(0, Math.Min(maxBaseValue, (fanSpeed1 + fanSpeed2) / 2));
         }
       }
       SendOmenBiosWmi(0x2E, data, 0);
@@ -614,16 +632,15 @@ namespace OmenSuperHub {
 
     public static bool IsSwFanControlSupport() {
       byte[] systemDesignData = GetSystemDesignData();
-      if (systemDesignData != null && systemDesignData.Length != 0) {
-        return (systemDesignData[4] & 1) > 0;
-      }
-      return false;
+      if (systemDesignData == null || systemDesignData.Length < 5)
+        return false;
+      return (systemDesignData[4] & 1) > 0;
     }
 
     public static ThermalPolicyVersion GetThermalPolicyVersion() {
       ThermalPolicyVersion thermalPolicyVersion = ThermalPolicyVersion.V0;
       byte[] systemDesignData = GetSystemDesignData();
-      if (systemDesignData != null && systemDesignData.Length != 0)
+      if (systemDesignData != null && systemDesignData.Length >= 4)
         thermalPolicyVersion = (ThermalPolicyVersion)systemDesignData[3];
       if ((new string[6]
       {
@@ -724,6 +741,19 @@ namespace OmenSuperHub {
 
     public static void SetBalanceMode() {
       SetFanMode(PerformanceMode.L2);
+    }
+
+    // 使用 UI 模式映射而不是直接发送 L2/L7，兼容新旧热策略版本。
+    public static void SetDefaultPerformanceMode() {
+      SetFanMode(PerformanceModeOnUI.Default);
+    }
+
+    public static void SetPerformanceMode() {
+      SetFanMode(PerformanceModeOnUI.Performance);
+    }
+
+    public static void SetEcoPerformanceMode() {
+      SetFanMode(PerformanceModeOnUI.Eco);
     }
 
     /// <summary>
@@ -863,7 +893,8 @@ namespace OmenSuperHub {
     //}
 
     public static byte[] SendOmenBiosWmi(uint commandType, byte[] data, int outputSize, uint command = 0x20008) {
-      const string namespaceName = @"root\wmi";
+      lock (_biosWmiLock) {
+        const string namespaceName = @"root\wmi";
       const string className = "hpqBIntM";
       string methodName = "hpqBIOSInt" + outputSize.ToString();
       byte[] sign = { 0x53, 0x45, 0x43, 0x55 };
@@ -921,7 +952,8 @@ namespace OmenSuperHub {
         string errorMessage = $"- Unexpected Exception (CommandType=0x{commandType:X2}): {ex.Message}";
         Logger.Error(": SendOmenBiosWmi:- Failed: Error " + errorMessage);
       }
-      return null;
+        return null;
+      }
     }
 
     public static void OmenKeyOff() {

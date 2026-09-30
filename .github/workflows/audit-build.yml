@@ -1,0 +1,35 @@
+name: Audit Build
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore packages
+        run: nuget restore OmenSuperHub.sln -NonInteractive
+
+      - name: Build Release x64
+        run: msbuild OmenSuperHub.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:RestorePackages=false
+
+      - name: Upload UAT build
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmenSuperHub-audit-${{ github.event.pull_request.head.sha || github.sha }}
+          path: bin/x64/Release/
+          if-no-files-found: error
+          retention-days: 14
