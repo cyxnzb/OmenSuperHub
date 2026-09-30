@@ -1,0 +1,7 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Legacy project files list Compile items explicitly. Keep the power-tuning UX
+       in its own partial Program source without growing Program.Menu.cs further. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'OmenSuperHub'">
+    <Compile Include="$(MSBuildThisFileDirectory)Program.PowerTuningUx.cs" />
+  </ItemGroup>
+</Project>
