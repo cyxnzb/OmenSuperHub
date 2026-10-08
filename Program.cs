@@ -133,6 +133,8 @@ namespace OmenSuperHub {
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool hwMonitorStopping = false; // 主动停止时置 true，阻止 Exited 自动重启
+    static int hwMonitorGeneration = 0; // Invalidate delayed restarts when monitor intentionally stops or app exits.
+    static volatile bool hwMonitorShuttingDown = false;
     static Process hwMonitorProcess;
     static StreamWriter hwMonitorIn;
 
@@ -699,7 +701,9 @@ namespace OmenSuperHub {
     }
 
     static void StartHardwareMonitor() {
+      if (hwMonitorShuttingDown) return;
       if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) return;
+      int monitorGeneration = Interlocked.Increment(ref hwMonitorGeneration);
 
       hwMonitorProcess = new Process {
         StartInfo = new ProcessStartInfo {
@@ -813,7 +817,9 @@ namespace OmenSuperHub {
         lastGpuSmoothedSampleUtc = DateTime.MinValue;
         //Logger.Info("StartHardwareMonitor [HWMonitor] 进程退出，准备重启...");
         System.Threading.Tasks.Task.Delay(3000).ContinueWith(_ => {
-          try { StartHardwareMonitor(); } catch { }
+          // Ignore a restart queued before manual stop, newer start, or application exit.
+          if (hwMonitorShuttingDown || monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
+          try { StartHardwareMonitor(); } catch (Exception ex) { Logger.Error($"Hardware monitor restart failed: {ex.Message}"); }
         });
       };
 
@@ -847,6 +853,7 @@ namespace OmenSuperHub {
     }
 
     static void StopHardwareMonitor() {
+      Interlocked.Increment(ref hwMonitorGeneration);
       if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
         hwMonitorStopping = true;
         try { hwMonitorProcess.Kill(); } catch { hwMonitorStopping = false; }
@@ -1837,6 +1844,7 @@ namespace OmenSuperHub {
       tooltipUpdateTimer.Stop(); // 停止定时器
 
       //openComputer.Close();
+      hwMonitorShuttingDown = true;
       StopHardwareMonitor();
       Application.Exit();
     }
