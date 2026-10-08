@@ -71,6 +71,18 @@ namespace OmenSuperHub {
       tooltipUpdateTimer.Start();
     }
 
+    // Async system-info queries can finish after a language change rebuilds the menu.
+    // A disposed handle must not crash a background task or update a stale menu.
+    static void PostMenuUpdate(ContextMenuStrip menu, Action action) {
+      if (menu == null || menu.IsDisposed || !menu.IsHandleCreated) return;
+      try {
+        PostMenuUpdate(menu, () => {
+          if (!menu.IsDisposed) action();
+        }));
+      } catch (InvalidOperationException) { }
+      catch (ObjectDisposedException) { }
+    }
+
     static void BuildTrayMenu(ContextMenuStrip menu) {
       menu.Items.Clear();
 
@@ -149,9 +161,9 @@ namespace OmenSuperHub {
             var limits = GetGpuPowerLimits();
             string limitsText = limits[0] == -2f ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
             // 更新 UI（必须在 UI 线程）
-            menu.BeginInvoke(new Action(() => {
-              gpuPowerLimitsMenu.Text = $"{Strings.SysNvidiaPower}: {limitsText}";
-            }));
+            PostMenuUpdate(menu, () => {
+              if (!gpuPowerLimitsMenu.IsDisposed) gpuPowerLimitsMenu.Text = $"{Strings.SysNvidiaPower}: {limitsText}";
+            });
           });
         }
 
@@ -161,7 +173,7 @@ namespace OmenSuperHub {
           int pchTemp = GetSensorTemperature(2);
           int vrTemp = GetSensorTemperature(3);
           // 更新 UI（必须在 UI 线程）
-          menu.BeginInvoke(new Action(() => {
+          PostMenuUpdate(menu, () => {
             if (irSensorMenu != null) irSensorMenu.Text = $"{Strings.SysIRSensor}: {FormatSensorTemperature(irTemp)}";
             if (ambientSensorMenu != null) ambientSensorMenu.Text = $"{Strings.SysAmbient}: {FormatSensorTemperature(ambientTemp)}";
             if (pchSensorMenu != null) pchSensorMenu.Text = $"{Strings.SysPCH}: {FormatSensorTemperature(pchTemp)}";
