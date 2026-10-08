@@ -1593,6 +1593,8 @@ namespace OmenSuperHub {
         next = current - Math.Min(Math.Abs(delta), AutoFanFallStep);
       }
 
+      // A manual/max switch may race with a pending automatic timer tick.
+      if (fanControl != "auto") return;
       SetFanLevel(next, next, Is3FanNb);
       // No firmware acknowledgement is available; cache the requested value only.
       // This is NOT proof of the physical RPM, which monitorFan continues to read.
