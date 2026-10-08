@@ -1690,7 +1690,8 @@ namespace OmenSuperHub {
         {
           var gpuParts = new List<string>();
           if (showGPUTemp && gpuTempReady) gpuParts.Add($"{GPUTemp:F1}°C");
-          if (showGPUPower) gpuParts.Add($"{GPUPower:F1}W");
+          // A missing/stale power sample must not be presented as a measured 0 W.
+          if (showGPUPower && rawGotGPU && IsFresh(lastGpuPowerSampleUtc)) gpuParts.Add($"{GPUPower:F1}W");
           if (showGPUFrequency && GPUFrequency > 0) gpuParts.Add($"{GPUFrequency:F0}MHz");
           if (gpuParts.Count > 0) str += $"GPU: {string.Join(", ", gpuParts)}";
           else if (pawnIOState == "RUNNING") str += $"GPU: {Strings.MonitorPrepareLabel}";
@@ -1759,7 +1760,7 @@ namespace OmenSuperHub {
         } else if (pawnIOState.Length > 0) {
           var gpuParts = new List<string>();
           if (showGPUTemp && gpuTempReady) gpuParts.Add($"{GPUTemp:F0}°C");
-          if (showGPUPower) gpuParts.Add($"{GPUPower:F0}W");
+          if (showGPUPower && rawGotGPU && IsFresh(lastGpuPowerSampleUtc)) gpuParts.Add($"{GPUPower:F0}W");
           if (showGPUFrequency && GPUFrequency > 0) gpuParts.Add($"{GPUFrequency / 1000f:F1}G");
           if (gpuParts.Count > 0) lines.Add($"GPU {string.Join(" ", gpuParts)}");
           else if (pawnIOState == "RUNNING") lines.Add($"GPU {Strings.MonitorPrepareLabel}");
