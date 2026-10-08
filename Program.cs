@@ -129,6 +129,12 @@ namespace OmenSuperHub {
     const int AutoFanDeadband = 2;       // 200 RPM
     const int AutoFanFallStep = 2;       // max -200 RPM per second when cooling down
     static bool autoFanSensorFailsafeActive = false;
+    // Last requested AUTO fan command, distinct from the EC-reported physical RPM.
+    // EC RPM lags behind commands and must not be treated as the previous command.
+    static int lastAutomaticFanCommand = -1;
+    static void ResetAutomaticFanCommand() {
+      Interlocked.Exchange(ref lastAutomaticFanCommand, -1);
+    }
     static volatile bool tempReady = false;   // 子进程首次输出有效温度后置 true
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
@@ -1535,7 +1541,10 @@ namespace OmenSuperHub {
     }
 
     static void ApplyAutomaticFanControl() {
-      if (fanControl != "auto") return;
+      if (fanControl != "auto") {
+        ResetAutomaticFanCommand();
+        return;
+      }
 
       int targetRpm = GetFanSpeedForTemperature();
       if (targetRpm < 0) {
@@ -1561,9 +1570,12 @@ namespace OmenSuperHub {
       }
 
       int target = Math.Max(0, Math.Min(255, targetRpm / 100));
-      int current;
-      lock (fanSpeedNow) {
-        current = Math.Max(0, Math.Min(255, (fanSpeedNow[0] + fanSpeedNow[1]) / 2));
+      int current = Volatile.Read(ref lastAutomaticFanCommand);
+      if (current < 0) {
+        // First AUTO tick after a mode change: seed from best available state.
+        lock (fanSpeedNow) {
+          current = Math.Max(0, Math.Min(255, (fanSpeedNow[0] + fanSpeedNow[1]) / 2));
+        }
       }
 
       bool emergency = IsEmergencyThermalState();
@@ -1582,6 +1594,9 @@ namespace OmenSuperHub {
       }
 
       SetFanLevel(next, next, Is3FanNb);
+      // No firmware acknowledgement is available; cache the requested value only.
+      // This is NOT proof of the physical RPM, which monitorFan continues to read.
+      Volatile.Write(ref lastAutomaticFanCommand, next);
       if (!monitorFan) {
         lock (fanSpeedNow) {
           fanSpeedNow[0] = next;
