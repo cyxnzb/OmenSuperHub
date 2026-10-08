@@ -180,7 +180,7 @@ namespace OmenSuperHub {
             if (ambientSensorMenu != null && !ambientSensorMenu.IsDisposed) ambientSensorMenu.Text = $"{Strings.SysAmbient}: {FormatSensorTemperature(ambientTemp)}";
             if (pchSensorMenu != null && !pchSensorMenu.IsDisposed) pchSensorMenu.Text = $"{Strings.SysPCH}: {FormatSensorTemperature(pchTemp)}";
             if (vrSensorMenu != null && !vrSensorMenu.IsDisposed) vrSensorMenu.Text = $"{Strings.SysVR}: {FormatSensorTemperature(vrTemp)}";
-          }));
+          });
         });
 
         isSysInfoMenuOpen = true;
