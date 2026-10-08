@@ -131,6 +131,8 @@ namespace OmenSuperHub {
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool hwMonitorStopping = false; // 主动停止时置 true，阻止 Exited 自动重启
+    static int hwMonitorGeneration = 0; // Invalidate delayed restarts when monitor intentionally stops or app exits.
+    static volatile bool hwMonitorShuttingDown = false;
     static Process hwMonitorProcess;
     static StreamWriter hwMonitorIn;
 
@@ -711,7 +713,11 @@ namespace OmenSuperHub {
     }
 
     static void StartHardwareMonitor() {
+      if (hwMonitorShuttingDown) return;
       if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) return;
+      int monitorGeneration = Interlocked.Increment(ref hwMonitorGeneration);
+      // A previous explicit stop must not suppress an unexpected exit of this new instance.
+      hwMonitorStopping = false;
 
       hwMonitorProcess = new Process {
         StartInfo = new ProcessStartInfo {
@@ -727,6 +733,8 @@ namespace OmenSuperHub {
       };
 
       hwMonitorProcess.OutputDataReceived += (s, e) => {
+        // Discard queued output from a superseded monitor process.
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (string.IsNullOrEmpty(e.Data)) return;
         //Debug.WriteLine("[HWMonitor OUT] " + e.Data); // 将子进程输出重定向到VS的输出窗口
         if (e.Data.StartsWith("CRASH:")) return;
@@ -807,12 +815,15 @@ namespace OmenSuperHub {
       };
 
       hwMonitorProcess.ErrorDataReceived += (s, e) => {
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (string.IsNullOrEmpty(e.Data)) return;
         Logger.Error("HardwareMonitor [HWMonitor ERR] " + e.Data);
       };
 
       hwMonitorProcess.EnableRaisingEvents = true;
       hwMonitorProcess.Exited += (s, e) => {
+        // A superseded process must never reset the new instance's temperature state.
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (hwMonitorStopping) {
           hwMonitorStopping = false;
           return;
@@ -825,7 +836,9 @@ namespace OmenSuperHub {
         lastGpuSmoothedSampleUtc = DateTime.MinValue;
         //Logger.Info("StartHardwareMonitor [HWMonitor] 进程退出，准备重启...");
         System.Threading.Tasks.Task.Delay(3000).ContinueWith(_ => {
-          try { StartHardwareMonitor(); } catch { }
+          // Ignore a restart queued before manual stop, newer start, or application exit.
+          if (hwMonitorShuttingDown || monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
+          try { StartHardwareMonitor(); } catch (Exception ex) { Logger.Error($"Hardware monitor restart failed: {ex.Message}"); }
         });
       };
 
@@ -837,7 +850,11 @@ namespace OmenSuperHub {
         SetGpuMonitorState(monitorGPU);
         SetCpuMonitorState(monitorCPU);
         SetMonitorInterval(monitorRefreshRate == "high" ? 250 : 1000);
-      } catch (Exception) { }
+      } catch (Exception ex) {
+        // A failed monitor launch must be visible in diagnostics; silently swallowing
+        // it could leave automatic fan control without a usable temperature source.
+        Logger.Error($"Hardware monitor startup failed: {ex.Message}");
+      }
     }
 
     static void SetGpuMonitorState(bool enable) {
@@ -859,6 +876,7 @@ namespace OmenSuperHub {
     }
 
     static void StopHardwareMonitor() {
+      Interlocked.Increment(ref hwMonitorGeneration);
       if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
         hwMonitorStopping = true;
         try { hwMonitorProcess.Kill(); } catch { hwMonitorStopping = false; }
@@ -1844,6 +1862,7 @@ namespace OmenSuperHub {
       tooltipUpdateTimer.Stop(); // 停止定时器
 
       //openComputer.Close();
+      hwMonitorShuttingDown = true;
       StopHardwareMonitor();
       Application.Exit();
     }
