@@ -126,13 +126,21 @@ namespace OmenSuperHub {
     static readonly object deferredHardwareApplyLock = new object();
     static readonly Dictionary<string, int> deferredHardwareApplyVersions = new Dictionary<string, int>();
     static int deferredHardwareApplyGeneration = 0;
-    const int AutoFanDeadband = 2;       // 200 RPM
-    const int AutoFanFallStep = 2;       // max -200 RPM per second when cooling down
     static bool autoFanSensorFailsafeActive = false;
+    // Last requested AUTO fan command, distinct from the EC-reported physical RPM.
+    // EC RPM lags behind commands and must not be treated as the previous command.
+    static int lastAutomaticFanCommand = -1;
+    static void ResetAutomaticFanCommand() {
+      Interlocked.Exchange(ref lastAutomaticFanCommand, -1);
+    }
     static volatile bool tempReady = false;   // 子进程首次输出有效温度后置 true
     static volatile bool cpuTempReady = false; // CPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool hwMonitorStopping = false; // 主动停止时置 true，阻止 Exited 自动重启
+    static int hwMonitorGeneration = 0; // Invalidate delayed restarts when monitor intentionally stops or app exits.
+    static readonly object hwMonitorLifecycleLock = new object();
+    static int hwMonitorStartFailures = 0;
+    static volatile bool hwMonitorShuttingDown = false;
     static Process hwMonitorProcess;
     static StreamWriter hwMonitorIn;
 
@@ -145,6 +153,9 @@ namespace OmenSuperHub {
     static SortedDictionary<float, int> CPUTempFanMap = new SortedDictionary<float, int>();
     static SortedDictionary<float, int> GPUTempFanMap = new SortedDictionary<float, int>();
     static System.Threading.Timer fanControlTimer;
+    // A timer may dispatch a second callback while the first one is blocked in BIOS WMI.
+    // Never allow concurrent automatic-fan writes; the next periodic tick retries.
+    static int _isApplyingAutomaticFanControl = 0;
     static System.Timers.Timer tooltipUpdateTimer; // Timer for updating tooltip
     static System.Windows.Forms.Timer checkFloatingTimer, optimiseTimer;
     static NotifyIcon trayIcon;
@@ -174,7 +185,8 @@ namespace OmenSuperHub {
     static void Main(string[] args) {
       //Console.WriteLine($"0.1: {sw.ElapsedMilliseconds}ms");
       if (args.Length > 0 && args[0] == "--hwmonitor") {
-        RunHardwareMonitor();
+        // Parent detected an NVIDIA dGPU: never substitute AMD iGPU data for it.
+        RunHardwareMonitor(args.Length > 1 && args[1] == "nvidia");
         return;
       }
 
@@ -310,10 +322,21 @@ namespace OmenSuperHub {
 
         // Main loop to query CPU and GPU temperature every second
         fanControlTimer = new System.Threading.Timer((e) => {
+          // System.Threading.Timer does not serialize callbacks. Skip only overlapping
+          // invocations; never queue stale fan-speed targets behind a slow WMI call.
+          if (Interlocked.CompareExchange(ref _isApplyingAutomaticFanControl, 1, 0) != 0)
+            return;
+          var elapsed = System.Diagnostics.Stopwatch.StartNew();
           try {
             ApplyAutomaticFanControl();
           } catch (Exception ex) {
             Logger.Error($"Automatic fan control failed: {ex.Message}");
+          } finally {
+            elapsed.Stop();
+            Interlocked.Exchange(ref _isApplyingAutomaticFanControl, 0);
+            // Diagnostic only: distinguish slow BIOS/WMI calls from normal fan-curve behavior.
+            if (elapsed.ElapsedMilliseconds > 1500)
+              Logger.Warn($"Automatic fan control callback took {elapsed.ElapsedMilliseconds}ms (>1500ms).");
           }
         }, null, 100, 1000);
 
@@ -538,7 +561,7 @@ namespace OmenSuperHub {
     }
 
     [HandleProcessCorruptedStateExceptions]
-    static void RunHardwareMonitor() {
+    static void RunHardwareMonitor(bool preferNvidiaGpu) {
       bool isEnabled = false;
       //Console.Error.WriteLine("CRASH: " + $"1: {sw.ElapsedMilliseconds}ms");
       var computer = new LibreComputer() { };
@@ -552,6 +575,8 @@ namespace OmenSuperHub {
       //Console.Error.WriteLine("CRASH: " + $"3: {sw.ElapsedMilliseconds}ms");
       int sleepMs = 1000;
       var computerLock = new object();
+      string lastCpuTemperatureSource = null;
+      string lastGpuTemperatureSource = null;
 
       var readThread = new Thread(() => {
         while (true) {
@@ -594,8 +619,14 @@ namespace OmenSuperHub {
       //Console.Error.WriteLine("CRASH: " + $"4: {sw.ElapsedMilliseconds}ms");
       while (true) {
         bool gGpu = false;
+        // Prefer discrete NVIDIA telemetry when an AMD integrated GPU is also enumerated.
+        // Otherwise sensor enumeration order can silently replace dGPU temperature.
+        int selectedGpuPriority = 0;
+        int selectedGpuPowerPriority = 0;
+        int selectedGpuClockPriority = 0;
         bool exactCpuClockFound = false;
         int cpuTempPriority = 0;
+        string cpuTemperatureSource = null;
         float cpuFallbackTempSum = 0f;
         float cpuFallbackTempMax = float.MinValue;
         int cpuFallbackTempCount = 0;
@@ -606,6 +637,7 @@ namespace OmenSuperHub {
           lock (computerLock) {
           foreach (LibreIHardware hw in computer.Hardware) {
             if (hw.HardwareType != LibreHardwareType.Cpu && hw.HardwareType != LibreHardwareType.GpuNvidia && hw.HardwareType != LibreHardwareType.GpuAmd) continue;
+            if (preferNvidiaGpu && hw.HardwareType == LibreHardwareType.GpuAmd) continue;
 
             // 如果底层驱动对象因为驱动更新导致句柄无效，Update会抛出异常。
             // 此时我们直接让子进程退出，父进程会重新启动一个新的子进程来进行初始化。
@@ -640,6 +672,7 @@ namespace OmenSuperHub {
                       if (priority > cpuTempPriority) {
                         tCpuSample = value;
                         cpuTempPriority = priority;
+                        cpuTemperatureSource = sensorName;
                       } else if (priority == 0 &&
                                  sensorName.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) < 0) {
                         // Last-resort fallback for unusual CPUs with no aggregate sensor.
@@ -665,16 +698,25 @@ namespace OmenSuperHub {
                     }
                   }
                 } else if (hw.HardwareType == LibreHardwareType.GpuNvidia || hw.HardwareType == LibreHardwareType.GpuAmd) {
+                  int gpuPriority = hw.HardwareType == LibreHardwareType.GpuNvidia ? 2 : 1;
                   if (sensor.SensorType == LibreSensorType.Temperature && sensor.Name == "GPU Core" && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
-                    if (IsPlausibleTemperature(value)) tGpuSample = value;
+                    if (IsPlausibleTemperature(value) && gpuPriority >= selectedGpuPriority) {
+                      tGpuSample = value;
+                      selectedGpuPriority = gpuPriority;
+                    }
                   }
-                  if (sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
+                  if (gpuPriority >= selectedGpuPowerPriority && sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
-                    if (IsPlausiblePower(value)) pGpu = value;
+                    if (IsPlausiblePower(value)) {
+                      pGpu = value;
+                      selectedGpuPowerPriority = gpuPriority;
+                    }
                   }
-                  if (sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue)
+                  if (gpuPriority >= selectedGpuClockPriority && sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue) {
                     fGpu = sensor.Value.GetValueOrDefault();
+                    selectedGpuClockPriority = gpuPriority;
+                  }
                 }
               } catch { }
             }
@@ -685,6 +727,24 @@ namespace OmenSuperHub {
             // 75% average + 25% hottest core: conservative enough to catch asymmetric
             // core heating without making a single transient core fully dictate the fan.
             tCpuSample = fallbackAverage * 0.75f + cpuFallbackTempMax * 0.25f;
+            cpuTemperatureSource = "Core fallback (75% mean, 25% max)";
+          }
+          // Report a source change without extra hardware polling or log spam.
+          // Important when comparing CPU Package vs. AMD Tctl/Tdie readings.
+          string sourceLabel = cpuTemperatureSource ?? "unavailable";
+          if (!string.Equals(sourceLabel, lastCpuTemperatureSource, StringComparison.Ordinal)) {
+            Console.Error.WriteLine("CPU temperature source: " + sourceLabel);
+            lastCpuTemperatureSource = sourceLabel;
+          }
+          // Never publish temperature from one GPU with power/clock from another.
+          // A missing NVIDIA power sensor is unavailable, not AMD iGPU power.
+          if (selectedGpuPowerPriority != selectedGpuPriority) pGpu = -1f;
+          if (selectedGpuClockPriority != selectedGpuPriority) fGpu = 0f;
+          string gpuSourceLabel = selectedGpuPriority == 2 ? "NVIDIA GPU Core" :
+                                  selectedGpuPriority == 1 ? "AMD GPU Core" : "unavailable";
+          if (!string.Equals(gpuSourceLabel, lastGpuTemperatureSource, StringComparison.Ordinal)) {
+            Console.Error.WriteLine("GPU temperature source: " + gpuSourceLabel);
+            lastGpuTemperatureSource = gpuSourceLabel;
           }
           gGpu = tGpuSample.HasValue;
           float outCpuTemp = tCpuSample ?? -1f;
@@ -698,13 +758,23 @@ namespace OmenSuperHub {
       }
     }
 
+    static bool IsHardwareMonitorRunning() {
+      try { return hwMonitorProcess != null && !hwMonitorProcess.HasExited; }
+      catch (InvalidOperationException) { return false; } // Also covers ObjectDisposedException.
+    }
+
     static void StartHardwareMonitor() {
-      if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) return;
+      lock (hwMonitorLifecycleLock) {
+      if (hwMonitorShuttingDown) return;
+      if (IsHardwareMonitorRunning()) return;
+      int monitorGeneration = Interlocked.Increment(ref hwMonitorGeneration);
+      // A previous explicit stop must not suppress an unexpected exit of this new instance.
+      hwMonitorStopping = false;
 
       hwMonitorProcess = new Process {
         StartInfo = new ProcessStartInfo {
           FileName = Application.ExecutablePath,
-          Arguments = "--hwmonitor",
+          Arguments = hasNVIDIAGpu ? "--hwmonitor nvidia" : "--hwmonitor",
           UseShellExecute = false,
           RedirectStandardInput = true,
           RedirectStandardOutput = true,
@@ -715,6 +785,8 @@ namespace OmenSuperHub {
       };
 
       hwMonitorProcess.OutputDataReceived += (s, e) => {
+        // Discard queued output from a superseded monitor process.
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (string.IsNullOrEmpty(e.Data)) return;
         //Debug.WriteLine("[HWMonitor OUT] " + e.Data); // 将子进程输出重定向到VS的输出窗口
         if (e.Data.StartsWith("CRASH:")) return;
@@ -762,7 +834,8 @@ namespace OmenSuperHub {
           if (gpuTempReady && sampleUtc - lastGpuTempSampleUtc > hardwareSampleTimeout) {
             gpuTempReady = false;
             rawGotGPU = false;
-            GPUTemp = 40;
+            // Keep the last numeric value only as a cached sample; validity is false.
+            // Do not inject a synthetic 40 C sample when the GPU stops reporting.
             GPUPower = 0;
             rawFrequencyGPU = 0f;
             GPUFrequency = 0f;
@@ -795,12 +868,15 @@ namespace OmenSuperHub {
       };
 
       hwMonitorProcess.ErrorDataReceived += (s, e) => {
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (string.IsNullOrEmpty(e.Data)) return;
         Logger.Error("HardwareMonitor [HWMonitor ERR] " + e.Data);
       };
 
       hwMonitorProcess.EnableRaisingEvents = true;
       hwMonitorProcess.Exited += (s, e) => {
+        // A superseded process must never reset the new instance's temperature state.
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (hwMonitorStopping) {
           hwMonitorStopping = false;
           return;
@@ -813,43 +889,69 @@ namespace OmenSuperHub {
         lastGpuSmoothedSampleUtc = DateTime.MinValue;
         //Logger.Info("StartHardwareMonitor [HWMonitor] 进程退出，准备重启...");
         System.Threading.Tasks.Task.Delay(3000).ContinueWith(_ => {
-          try { StartHardwareMonitor(); } catch { }
+          // Ignore a restart queued before manual stop, newer start, or application exit.
+          if (hwMonitorShuttingDown || monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
+          try { StartHardwareMonitor(); } catch (Exception ex) { Logger.Error($"Hardware monitor restart failed: {ex.Message}"); }
         });
       };
 
       try {
         hwMonitorProcess.Start();
+        hwMonitorStartFailures = 0;
         hwMonitorIn = hwMonitorProcess.StandardInput;
         hwMonitorProcess.BeginOutputReadLine();
         hwMonitorProcess.BeginErrorReadLine(); // 必须读取错误流避免死锁
         SetGpuMonitorState(monitorGPU);
         SetCpuMonitorState(monitorCPU);
         SetMonitorInterval(monitorRefreshRate == "high" ? 250 : 1000);
-      } catch (Exception) { }
+      } catch (Exception ex) {
+        // A failed monitor launch must be visible in diagnostics; silently swallowing
+        // it could leave automatic fan control without a usable temperature source.
+        Logger.Error($"Hardware monitor startup failed: {ex.Message}");
+        // Do not retain an unstarted Process: accessing HasExited later can throw.
+        Interlocked.Increment(ref hwMonitorGeneration);
+        try { hwMonitorProcess?.Kill(); } catch { }
+        try { hwMonitorProcess?.Dispose(); } catch { }
+        hwMonitorProcess = null;
+        hwMonitorIn = null;
+        int retryGeneration = Volatile.Read(ref hwMonitorGeneration);
+        hwMonitorStartFailures = Math.Min(hwMonitorStartFailures + 1, 6);
+        int retryDelaySeconds = Math.Min(60, 3 * (1 << Math.Min(4, hwMonitorStartFailures - 1)));
+        System.Threading.Tasks.Task.Delay(retryDelaySeconds * 1000).ContinueWith(_ => {
+          if (hwMonitorShuttingDown || retryGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
+          try { StartHardwareMonitor(); }
+          catch (Exception retryException) { Logger.Error($"Monitor retry failed: {retryException.Message}"); }
+        });
+      }
+      }
     }
 
     static void SetGpuMonitorState(bool enable) {
-      if (hwMonitorIn != null && hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
+      if (hwMonitorIn != null && IsHardwareMonitorRunning()) {
         try { hwMonitorIn.WriteLine(enable ? "GPU:ON" : "GPU:OFF"); } catch { }
       }
     }
 
     static void SetCpuMonitorState(bool enable) {
-      if (hwMonitorIn != null && hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
+      if (hwMonitorIn != null && IsHardwareMonitorRunning()) {
         try { hwMonitorIn.WriteLine(enable ? "CPU:ON" : "CPU:OFF"); } catch { }
       }
     }
 
     static void SetMonitorInterval(int ms) {
-      if (hwMonitorIn != null && hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
+      if (hwMonitorIn != null && IsHardwareMonitorRunning()) {
         try { hwMonitorIn.WriteLine($"INTERVAL:{ms}"); } catch { }
       }
     }
 
     static void StopHardwareMonitor() {
-      if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
-        hwMonitorStopping = true;
-        try { hwMonitorProcess.Kill(); } catch { hwMonitorStopping = false; }
+      lock (hwMonitorLifecycleLock) {
+        Interlocked.Increment(ref hwMonitorGeneration);
+        if (IsHardwareMonitorRunning()) {
+          hwMonitorStopping = true;
+          try { hwMonitorProcess.Kill(); } catch { hwMonitorStopping = false; }
+        }
+        hwMonitorIn = null;
       }
     }
 
@@ -865,6 +967,7 @@ namespace OmenSuperHub {
           SetFanLevel(rpmValue / 100, rpmValue / 100, Is3FanNb);
         } else if (fanControl.Contains("RPM")) {
           fanControl = "auto";
+          ResetAutomaticFanCommand();
           SetMaxFanSpeedOff();
           fanControlTimer?.Change(0, 1000);
         }
@@ -1030,11 +1133,12 @@ namespace OmenSuperHub {
     static void UpdateDynamicIcon() {
       if (customIcon != "dynamic") return;
       if (trayIcon?.ContextMenuStrip != null && trayIcon.ContextMenuStrip.Visible) return;
-      if (monitorCPU) {
+      if (monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) {
         GenerateDynamicIcon((int)CPUTemp);
-      } else if (monitorGPU) {
+      } else if (monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)) {
         GenerateDynamicIcon((int)GPUTemp);
       } else {
+        // Unknown temperature must not be displayed as an apparently valid 50/40 C.
         trayIcon.Icon = Properties.Resources.smallfan;
       }
     }
@@ -1213,11 +1317,17 @@ namespace OmenSuperHub {
       if (dataLocalize != "on") return;
       if (Interlocked.CompareExchange(ref _isSyncingDataToTxt, 1, 0) != 0) return;
 
-      string cpuText = ((int)Math.Round(CPUTemp)).ToString();
-      string gpuText = ((int)Math.Round(GPUTemp)).ToString();
-      string fanText;
-      lock (fanSpeedNow) {
-        fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
+      // Export -1 for unavailable metrics rather than plausible-looking defaults.
+      // Keep numeric text for consumers that parse these files as integers.
+      string cpuText = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)
+          ? ((int)Math.Round(CPUTemp)).ToString() : "-1";
+      string gpuText = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)
+          ? ((int)Math.Round(GPUTemp)).ToString() : "-1";
+      string fanText = "-1";
+      if (monitorFan) {
+        lock (fanSpeedNow) {
+          fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
+        }
       }
 
       System.Threading.Tasks.Task.Run(() => {
@@ -1358,13 +1468,13 @@ namespace OmenSuperHub {
       }
 
       if (monitorCPU && cpuTempReady) {
-        CPUPower = queryUtc - lastCpuPowerSampleUtc <= hardwareSampleTimeout ? rawPowerCPU : 0f;
+        CPUPower = IsFresh(lastCpuPowerSampleUtc) ? rawPowerCPU : 0f;
         CPUFrequency = rawFrequencyCPU;
       }
       if (monitorGPU) {
         getGPU = rawGotGPU;
         if (getGPU) {
-          if (queryUtc - lastGpuPowerSampleUtc > hardwareSampleTimeout || (int)(rawPowerGPU * 10) == 5900)
+          if (!IsFresh(lastGpuPowerSampleUtc) || (int)(rawPowerGPU * 10) == 5900)
             GPUPower = 0;
           else
             GPUPower = rawPowerGPU;
@@ -1416,6 +1526,7 @@ namespace OmenSuperHub {
 
           // 再切换为自动风扇控制
           fanControl = "auto";
+          ResetAutomaticFanCommand();
           SetMaxFanSpeedOff();
           fanControlTimer.Change(0, 1000);
           UpdateCheckedState("fanControlGroup", Strings.FanAuto);
@@ -1523,7 +1634,7 @@ namespace OmenSuperHub {
     }
 
     static bool IsFresh(DateTime sampleUtc) {
-      return sampleUtc != DateTime.MinValue && DateTime.UtcNow - sampleUtc <= hardwareSampleTimeout;
+      return TelemetryFreshness.IsFresh(sampleUtc, DateTime.UtcNow, hardwareSampleTimeout);
     }
 
     static bool IsEmergencyThermalState() {
@@ -1535,7 +1646,10 @@ namespace OmenSuperHub {
     }
 
     static void ApplyAutomaticFanControl() {
-      if (fanControl != "auto") return;
+      if (fanControl != "auto") {
+        ResetAutomaticFanCommand();
+        return;
+      }
 
       int targetRpm = GetFanSpeedForTemperature();
       if (targetRpm < 0) {
@@ -1561,27 +1675,28 @@ namespace OmenSuperHub {
       }
 
       int target = Math.Max(0, Math.Min(255, targetRpm / 100));
-      int current;
-      lock (fanSpeedNow) {
-        current = Math.Max(0, Math.Min(255, (fanSpeedNow[0] + fanSpeedNow[1]) / 2));
-      }
+      // Use observed speed only for the first AUTO command after a mode change.
+      // Subsequent ramps must depend on the prior requested command, not EC lag.
+      int observed;
+      lock (fanSpeedNow) { observed = (fanSpeedNow[0] + fanSpeedNow[1]) / 2; }
+      int current = FanControlPolicy.SelectControlBaseline(
+          Volatile.Read(ref lastAutomaticFanCommand), observed);
 
       bool emergency = IsEmergencyThermalState();
       if (emergency && platformMaxFanSpeed.HasValue)
         target = Math.Max(target, Math.Min(255, platformMaxFanSpeed.Value / 100));
 
-      int delta = target - current;
-      if (!emergency && Math.Abs(delta) <= AutoFanDeadband) return;
+      // Pure, hardware-independent ramp policy is regression-tested in CI.
+      // Heating still ramps up immediately; only cooling is rate-limited.
+      int next = FanControlPolicy.CalculateNextOrSkip(target, current, emergency);
+      if (next < 0) return;
 
-      int next = target;
-      if (!emergency && delta < 0) {
-        // Heating must win over acoustics: ramp up to the calculated target immediately,
-        // matching the original controller's thermal response. Only slow the ramp-down
-        // to prevent fan hunting after short temperature spikes.
-        next = current - Math.Min(Math.Abs(delta), AutoFanFallStep);
-      }
-
+      // A manual/max switch may race with a pending automatic timer tick.
+      if (fanControl != "auto") return;
       SetFanLevel(next, next, Is3FanNb);
+      // No firmware acknowledgement is available; cache the requested value only.
+      // This is NOT proof of the physical RPM, which monitorFan continues to read.
+      Volatile.Write(ref lastAutomaticFanCommand, next);
       if (!monitorFan) {
         lock (fanSpeedNow) {
           fanSpeedNow[0] = next;
@@ -1690,7 +1805,8 @@ namespace OmenSuperHub {
         {
           var gpuParts = new List<string>();
           if (showGPUTemp && gpuTempReady) gpuParts.Add($"{GPUTemp:F1}°C");
-          if (showGPUPower) gpuParts.Add($"{GPUPower:F1}W");
+          // A missing/stale power sample must not be presented as a measured 0 W.
+          if (showGPUPower && rawGotGPU && IsFresh(lastGpuPowerSampleUtc) && (int)(rawPowerGPU * 10) != 5900) gpuParts.Add($"{GPUPower:F1}W");
           if (showGPUFrequency && GPUFrequency > 0) gpuParts.Add($"{GPUFrequency:F0}MHz");
           if (gpuParts.Count > 0) str += $"GPU: {string.Join(", ", gpuParts)}";
           else if (pawnIOState == "RUNNING") str += $"GPU: {Strings.MonitorPrepareLabel}";
@@ -1759,7 +1875,7 @@ namespace OmenSuperHub {
         } else if (pawnIOState.Length > 0) {
           var gpuParts = new List<string>();
           if (showGPUTemp && gpuTempReady) gpuParts.Add($"{GPUTemp:F0}°C");
-          if (showGPUPower) gpuParts.Add($"{GPUPower:F0}W");
+          if (showGPUPower && rawGotGPU && IsFresh(lastGpuPowerSampleUtc) && (int)(rawPowerGPU * 10) != 5900) gpuParts.Add($"{GPUPower:F0}W");
           if (showGPUFrequency && GPUFrequency > 0) gpuParts.Add($"{GPUFrequency / 1000f:F1}G");
           if (gpuParts.Count > 0) lines.Add($"GPU {string.Join(" ", gpuParts)}");
           else if (pawnIOState == "RUNNING") lines.Add($"GPU {Strings.MonitorPrepareLabel}");
@@ -1837,6 +1953,7 @@ namespace OmenSuperHub {
       tooltipUpdateTimer.Stop(); // 停止定时器
 
       //openComputer.Close();
+      hwMonitorShuttingDown = true;
       StopHardwareMonitor();
       Application.Exit();
     }

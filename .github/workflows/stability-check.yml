@@ -30,6 +30,28 @@ jobs:
             exit 1
           }
 
+      - name: Smoke-test read-only resource baseline collector
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'osh-baseline-smoke'
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\\tools\\Collect-ResourceBaseline.ps1 -DurationSeconds 10 -IntervalSeconds 1 -OutputDirectory $output -ProcessName 'OSH-CI-Nonexistent'
+          $csv = Get-ChildItem $output -Filter '*.csv' | Select-Object -First 1
+          $metadata = Get-ChildItem $output -Filter '*.metadata.txt' | Select-Object -First 1
+          if (-not $csv -or -not $metadata) { throw 'Baseline outputs were not produced.' }
+          $rows = @(Import-Csv $csv.FullName)
+          if ($rows.Count -lt 2) { throw 'Baseline collector produced insufficient samples.' }
+          if (@($rows | Where-Object { $_.Instance -ne 'not-running' }).Count -ne 0) { throw 'Missing-process semantics regressed.' }
+
+      - name: Test fan ramp policy (no hardware)
+        shell: pwsh
+        run: |
+          .\tests\Test-FanControlPolicy.ps1
+
+      - name: Test telemetry timestamp freshness (no hardware)
+        shell: pwsh
+        run: |
+          .\tests\Test-TelemetryFreshness.ps1
+
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
@@ -49,3 +71,12 @@ jobs:
 
       - name: Build Release x64
         run: msbuild OmenSuperHub.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:RestorePackages=false
+
+      - name: Publish isolated UAT build
+        if: github.event.pull_request.head.ref == 'uat-candidate-20261008'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmenSuperHub-UAT-${{ github.sha }}
+          path: bin/x64/Release/
+          if-no-files-found: error
+          retention-days: 14

@@ -167,9 +167,9 @@ namespace OmenSuperHub {
 
       if (powerTuningSummaryItem != null)
         powerTuningSummaryItem.Text = PowerTuningText(
-          $"当前：CPU ≤ {cpuText} · GPU {gpuText} · DB阈值 {tppText}",
-          $"目前：CPU ≤ {cpuText} · GPU {gpuText} · DB閾值 {tppText}",
-          $"Current: CPU ≤ {cpuText} · GPU {gpuText} · DB threshold {tppText}");
+          $"请求设置（未验证生效）：CPU ≤ {cpuText} · GPU {gpuText} · DB阈值 {tppText}",
+          $"要求設定（未驗證生效）：CPU ≤ {cpuText} · GPU {gpuText} · DB閾值 {tppText}",
+          $"Requested (not verified): CPU ≤ {cpuText} · GPU {gpuText} · DB threshold {tppText}");
 
       if (powerTuningCpuItem != null) {
         powerTuningCpuItem.Text = PowerTuningText(
@@ -283,58 +283,76 @@ namespace OmenSuperHub {
       RefreshPowerTuningText();
     }
 
+    // Use anchored layouts instead of fixed pixel coordinates: translations and
+    // high-DPI font scaling should not clip the apply/cancel controls.
     private static bool ShowWattDialog(string title, string description, int minimum, int maximum, int current, out int value) {
       value = current;
       using (var form = new Form())
+      using (var layout = new TableLayoutPanel())
       using (var descriptionLabel = new Label())
+      using (var valueRow = new FlowLayoutPanel())
       using (var valueSelector = new NumericUpDown())
       using (var unitLabel = new Label())
+      using (var buttonRow = new FlowLayoutPanel())
       using (var okButton = new Button())
       using (var cancelButton = new Button()) {
         form.Text = title;
-        form.Width = 520;
-        form.Height = 250;
-        form.FormBorderStyle = FormBorderStyle.FixedDialog;
+        form.AutoScaleMode = AutoScaleMode.Font;
+        form.ClientSize = new System.Drawing.Size(560, 240);
+        form.MinimumSize = new System.Drawing.Size(420, 240);
+        form.FormBorderStyle = FormBorderStyle.Sizable;
         form.MaximizeBox = false;
         form.MinimizeBox = false;
         form.StartPosition = FormStartPosition.CenterScreen;
+        form.ShowInTaskbar = false;
 
-        descriptionLabel.Left = 12;
-        descriptionLabel.Top = 12;
-        descriptionLabel.Width = 480;
-        descriptionLabel.Height = 82;
+        layout.Dock = DockStyle.Fill;
+        layout.Padding = new Padding(16);
+        layout.ColumnCount = 1;
+        layout.RowCount = 3;
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44f));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 48f));
+
+        descriptionLabel.Dock = DockStyle.Fill;
         descriptionLabel.Text = description;
+        descriptionLabel.TextAlign = System.Drawing.ContentAlignment.TopLeft;
+        descriptionLabel.AutoEllipsis = false;
 
-        valueSelector.Left = 120;
-        valueSelector.Top = 105;
-        valueSelector.Width = 170;
+        valueRow.Dock = DockStyle.Fill;
+        valueRow.FlowDirection = FlowDirection.LeftToRight;
+        valueRow.WrapContents = false;
         valueSelector.Minimum = minimum;
         valueSelector.Maximum = Math.Max(minimum, maximum);
         valueSelector.Increment = 5;
         valueSelector.Value = Math.Max(minimum, Math.Min(maximum, current));
-
-        unitLabel.Left = 300;
-        unitLabel.Top = 108;
-        unitLabel.Width = 60;
+        valueSelector.Width = 180;
+        valueSelector.Margin = new Padding(0, 5, 8, 0);
         unitLabel.Text = "W";
+        unitLabel.AutoSize = true;
+        unitLabel.Margin = new Padding(0, 9, 0, 0);
+        valueRow.Controls.Add(valueSelector);
+        valueRow.Controls.Add(unitLabel);
 
+        buttonRow.Dock = DockStyle.Fill;
+        buttonRow.FlowDirection = FlowDirection.RightToLeft;
+        buttonRow.WrapContents = false;
         okButton.Text = PowerTuningText("应用", "套用", "Apply");
-        okButton.Left = 145;
-        okButton.Top = 150;
-        okButton.Width = 100;
+        okButton.AutoSize = true;
+        okButton.MinimumSize = new System.Drawing.Size(95, 30);
         okButton.DialogResult = DialogResult.OK;
-
         cancelButton.Text = Strings.Cancel;
-        cancelButton.Left = 255;
-        cancelButton.Top = 150;
-        cancelButton.Width = 100;
+        cancelButton.AutoSize = true;
+        cancelButton.MinimumSize = new System.Drawing.Size(95, 30);
         cancelButton.DialogResult = DialogResult.Cancel;
+        buttonRow.Controls.Add(cancelButton);
+        buttonRow.Controls.Add(okButton);
 
-        form.Controls.Add(descriptionLabel);
-        form.Controls.Add(valueSelector);
-        form.Controls.Add(unitLabel);
-        form.Controls.Add(okButton);
-        form.Controls.Add(cancelButton);
+        layout.Controls.Add(descriptionLabel, 0, 0);
+        layout.Controls.Add(valueRow, 0, 1);
+        layout.Controls.Add(buttonRow, 0, 2);
+        form.Controls.Add(layout);
         form.AcceptButton = okButton;
         form.CancelButton = cancelButton;
 
