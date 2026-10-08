@@ -167,9 +167,9 @@ namespace OmenSuperHub {
 
       if (powerTuningSummaryItem != null)
         powerTuningSummaryItem.Text = PowerTuningText(
-          $"当前：CPU ≤ {cpuText} · GPU {gpuText} · DB阈值 {tppText}",
-          $"目前：CPU ≤ {cpuText} · GPU {gpuText} · DB閾值 {tppText}",
-          $"Current: CPU ≤ {cpuText} · GPU {gpuText} · DB threshold {tppText}");
+          $"请求设置（未验证生效）：CPU ≤ {cpuText} · GPU {gpuText} · DB阈值 {tppText}",
+          $"要求設定（未驗證生效）：CPU ≤ {cpuText} · GPU {gpuText} · DB閾值 {tppText}",
+          $"Requested (not verified): CPU ≤ {cpuText} · GPU {gpuText} · DB threshold {tppText}");
 
       if (powerTuningCpuItem != null) {
         powerTuningCpuItem.Text = PowerTuningText(
