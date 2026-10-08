@@ -566,6 +566,7 @@ namespace OmenSuperHub {
       //Console.Error.WriteLine("CRASH: " + $"3: {sw.ElapsedMilliseconds}ms");
       int sleepMs = 1000;
       var computerLock = new object();
+      string lastCpuTemperatureSource = null;
 
       var readThread = new Thread(() => {
         while (true) {
@@ -610,6 +611,7 @@ namespace OmenSuperHub {
         bool gGpu = false;
         bool exactCpuClockFound = false;
         int cpuTempPriority = 0;
+        string cpuTemperatureSource = null;
         float cpuFallbackTempSum = 0f;
         float cpuFallbackTempMax = float.MinValue;
         int cpuFallbackTempCount = 0;
@@ -654,6 +656,7 @@ namespace OmenSuperHub {
                       if (priority > cpuTempPriority) {
                         tCpuSample = value;
                         cpuTempPriority = priority;
+                        cpuTemperatureSource = sensorName;
                       } else if (priority == 0 &&
                                  sensorName.IndexOf("Distance", StringComparison.OrdinalIgnoreCase) < 0) {
                         // Last-resort fallback for unusual CPUs with no aggregate sensor.
@@ -699,6 +702,14 @@ namespace OmenSuperHub {
             // 75% average + 25% hottest core: conservative enough to catch asymmetric
             // core heating without making a single transient core fully dictate the fan.
             tCpuSample = fallbackAverage * 0.75f + cpuFallbackTempMax * 0.25f;
+            cpuTemperatureSource = "Core fallback (75% mean, 25% max)";
+          }
+          // Report a source change without extra hardware polling or log spam.
+          // Important when comparing CPU Package vs. AMD Tctl/Tdie readings.
+          string sourceLabel = cpuTemperatureSource ?? "unavailable";
+          if (!string.Equals(sourceLabel, lastCpuTemperatureSource, StringComparison.Ordinal)) {
+            Console.Error.WriteLine("CPU temperature source: " + sourceLabel);
+            lastCpuTemperatureSource = sourceLabel;
           }
           gGpu = tGpuSample.HasValue;
           float outCpuTemp = tCpuSample ?? -1f;
