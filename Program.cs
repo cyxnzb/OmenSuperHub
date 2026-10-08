@@ -871,6 +871,7 @@ namespace OmenSuperHub {
           SetFanLevel(rpmValue / 100, rpmValue / 100, Is3FanNb);
         } else if (fanControl.Contains("RPM")) {
           fanControl = "auto";
+          ResetAutomaticFanCommand();
           SetMaxFanSpeedOff();
           fanControlTimer?.Change(0, 1000);
         }
@@ -1422,6 +1423,7 @@ namespace OmenSuperHub {
 
           // 再切换为自动风扇控制
           fanControl = "auto";
+          ResetAutomaticFanCommand();
           SetMaxFanSpeedOff();
           fanControlTimer.Change(0, 1000);
           UpdateCheckedState("fanControlGroup", Strings.FanAuto);
