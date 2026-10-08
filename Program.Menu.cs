@@ -119,7 +119,8 @@ namespace OmenSuperHub {
         System.Threading.Tasks.Task.Run(() => {
           string gpuModel = GetGpuModelFromNvidiaSmi();
           var limits = GetGpuPowerLimits();
-          string limitsText = limits[0] == -2f ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
+          string limitsText = limits == null || limits.Length < 2 || limits[0] == -2f
+            ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
           Thread.Sleep(2000);
           uiContext.Post(_ => {
             gpuPowerLimitsMenu.Text = $"{Strings.SysNvidiaPower}: {limitsText}";
@@ -159,7 +160,8 @@ namespace OmenSuperHub {
         if (hasNVIDIAGpu) {
           System.Threading.Tasks.Task.Run(() => {
             var limits = GetGpuPowerLimits();
-            string limitsText = limits[0] == -2f ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
+            string limitsText = limits == null || limits.Length < 2 || limits[0] == -2f
+            ? "--W / --W" : $"{limits[0]:F0}W / {limits[1]:F0}W";
             // 更新 UI（必须在 UI 线程）
             PostMenuUpdate(menu, () => {
               if (!gpuPowerLimitsMenu.IsDisposed) gpuPowerLimitsMenu.Text = $"{Strings.SysNvidiaPower}: {limitsText}";
