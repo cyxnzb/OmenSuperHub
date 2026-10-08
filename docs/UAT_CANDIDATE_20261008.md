@@ -19,7 +19,7 @@
 | CPU 空闲 | OSH CPU 温度 vs 参考工具 **同名** CPU Package / AMD Tctl/Tdie；不要拿 CCD 与 Package 直接比较 | 未测 |
 | CPU 轻/中负载 | 原始值、平滑显示及参考值同一时刻对照；记录突变和持续偏差 | 未测 |
 | 独显唤醒 | OSH 的 GPU Core 对齐 HWiNFO NVIDIA GPU Core，而非 AMD iGPU | 未测 |
-| 独显休眠 | 无有效 NVIDIA 温度时不把 AMD iGPU 温度解释成独显温度；若不一致，记录选源日志并立即反馈 | 未测 |
+| 独显休眠 | 已检测到 NVIDIA dGPU 时只采集 NVIDIA GPU Core；休眠/缺样本则显示不可用，不得回退为 AMD 核显温度 | 未测 |
 | 监控进程退出后恢复 | 记录时间、来源日志与温度数据恢复，不出现混杂旧进程数据 | 未测 |
 | 屏幕显示/本地导出 | 无效读数不显示为正常温度；`cpu_temp.txt`/`gpu_temp.txt` 不可用时为整数 `-1` | 未测 |
 | 挂钟自动校时 | 不应将未来/过期的样本判断为新鲜，观察日志恢复 | 未测 |

@@ -185,7 +185,8 @@ namespace OmenSuperHub {
     static void Main(string[] args) {
       //Console.WriteLine($"0.1: {sw.ElapsedMilliseconds}ms");
       if (args.Length > 0 && args[0] == "--hwmonitor") {
-        RunHardwareMonitor();
+        // Parent detected an NVIDIA dGPU: never substitute AMD iGPU data for it.
+        RunHardwareMonitor(args.Length > 1 && args[1] == "nvidia");
         return;
       }
 
@@ -560,7 +561,7 @@ namespace OmenSuperHub {
     }
 
     [HandleProcessCorruptedStateExceptions]
-    static void RunHardwareMonitor() {
+    static void RunHardwareMonitor(bool preferNvidiaGpu) {
       bool isEnabled = false;
       //Console.Error.WriteLine("CRASH: " + $"1: {sw.ElapsedMilliseconds}ms");
       var computer = new LibreComputer() { };
@@ -636,6 +637,7 @@ namespace OmenSuperHub {
           lock (computerLock) {
           foreach (LibreIHardware hw in computer.Hardware) {
             if (hw.HardwareType != LibreHardwareType.Cpu && hw.HardwareType != LibreHardwareType.GpuNvidia && hw.HardwareType != LibreHardwareType.GpuAmd) continue;
+            if (preferNvidiaGpu && hw.HardwareType == LibreHardwareType.GpuAmd) continue;
 
             // 如果底层驱动对象因为驱动更新导致句柄无效，Update会抛出异常。
             // 此时我们直接让子进程退出，父进程会重新启动一个新的子进程来进行初始化。
@@ -773,7 +775,7 @@ namespace OmenSuperHub {
       hwMonitorProcess = new Process {
         StartInfo = new ProcessStartInfo {
           FileName = Application.ExecutablePath,
-          Arguments = "--hwmonitor",
+          Arguments = hasNVIDIAGpu ? "--hwmonitor nvidia" : "--hwmonitor",
           UseShellExecute = false,
           RedirectStandardInput = true,
           RedirectStandardOutput = true,
