@@ -30,6 +30,11 @@ jobs:
             exit 1
           }
 
+      - name: Test fan ramp policy (no hardware)
+        shell: pwsh
+        run: |
+          .\\tests\\Test-FanControlPolicy.ps1
+
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
