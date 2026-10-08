@@ -76,7 +76,7 @@ namespace OmenSuperHub {
     static void PostMenuUpdate(ContextMenuStrip menu, Action action) {
       if (menu == null || menu.IsDisposed || !menu.IsHandleCreated) return;
       try {
-        PostMenuUpdate(menu, () => {
+        menu.BeginInvoke(new Action(() => {
           if (!menu.IsDisposed) action();
         }));
       } catch (InvalidOperationException) { }
@@ -174,10 +174,10 @@ namespace OmenSuperHub {
           int vrTemp = GetSensorTemperature(3);
           // 更新 UI（必须在 UI 线程）
           PostMenuUpdate(menu, () => {
-            if (irSensorMenu != null) irSensorMenu.Text = $"{Strings.SysIRSensor}: {FormatSensorTemperature(irTemp)}";
-            if (ambientSensorMenu != null) ambientSensorMenu.Text = $"{Strings.SysAmbient}: {FormatSensorTemperature(ambientTemp)}";
-            if (pchSensorMenu != null) pchSensorMenu.Text = $"{Strings.SysPCH}: {FormatSensorTemperature(pchTemp)}";
-            if (vrSensorMenu != null) vrSensorMenu.Text = $"{Strings.SysVR}: {FormatSensorTemperature(vrTemp)}";
+            if (irSensorMenu != null && !irSensorMenu.IsDisposed) irSensorMenu.Text = $"{Strings.SysIRSensor}: {FormatSensorTemperature(irTemp)}";
+            if (ambientSensorMenu != null && !ambientSensorMenu.IsDisposed) ambientSensorMenu.Text = $"{Strings.SysAmbient}: {FormatSensorTemperature(ambientTemp)}";
+            if (pchSensorMenu != null && !pchSensorMenu.IsDisposed) pchSensorMenu.Text = $"{Strings.SysPCH}: {FormatSensorTemperature(pchTemp)}";
+            if (vrSensorMenu != null && !vrSensorMenu.IsDisposed) vrSensorMenu.Text = $"{Strings.SysVR}: {FormatSensorTemperature(vrTemp)}";
           }));
         });
 
