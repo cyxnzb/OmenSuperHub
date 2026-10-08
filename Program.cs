@@ -1523,10 +1523,7 @@ namespace OmenSuperHub {
     }
 
     static bool IsFresh(DateTime sampleUtc) {
-      if (sampleUtc == DateTime.MinValue) return false;
-      TimeSpan age = DateTime.UtcNow - sampleUtc;
-      // A clock rollback must not make a stale timestamp appear fresh forever.
-      return age >= TimeSpan.Zero && age <= hardwareSampleTimeout;
+      return TelemetryFreshness.IsFresh(sampleUtc, DateTime.UtcNow, hardwareSampleTimeout);
     }
 
     static bool IsEmergencyThermalState() {
