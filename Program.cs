@@ -704,6 +704,8 @@ namespace OmenSuperHub {
       if (hwMonitorShuttingDown) return;
       if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) return;
       int monitorGeneration = Interlocked.Increment(ref hwMonitorGeneration);
+      // A previous explicit stop must not suppress an unexpected exit of this new instance.
+      hwMonitorStopping = false;
 
       hwMonitorProcess = new Process {
         StartInfo = new ProcessStartInfo {
