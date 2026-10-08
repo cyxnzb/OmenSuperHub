@@ -1527,6 +1527,13 @@ namespace OmenSuperHub {
       }, true));
       settingMenu.DropDownItems.Add(autoStartMenu);
 
+      // Put daily preset/fan actions before diagnostic details. Move the existing
+      // menu item rather than rebuilding its handlers or launching extra queries.
+      // The initial separator belongs to the old first-position system-info item.
+      menu.Items.Remove(sysInfoMenu);
+      if (menu.Items.Count > 0 && menu.Items[0] is ToolStripSeparator)
+        menu.Items.RemoveAt(0);
+      menu.Items.Add(sysInfoMenu);
       menu.Items.Add(settingMenu);
 
       menu.Items.Add(new ToolStripSeparator()); // Separator between groups
