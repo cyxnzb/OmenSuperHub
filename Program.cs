@@ -317,12 +317,17 @@ namespace OmenSuperHub {
           // invocations; never queue stale fan-speed targets behind a slow WMI call.
           if (Interlocked.CompareExchange(ref _isApplyingAutomaticFanControl, 1, 0) != 0)
             return;
+          var elapsed = System.Diagnostics.Stopwatch.StartNew();
           try {
             ApplyAutomaticFanControl();
           } catch (Exception ex) {
             Logger.Error($"Automatic fan control failed: {ex.Message}");
           } finally {
+            elapsed.Stop();
             Interlocked.Exchange(ref _isApplyingAutomaticFanControl, 0);
+            // Diagnostic only: distinguish slow BIOS/WMI calls from normal fan-curve behavior.
+            if (elapsed.ElapsedMilliseconds > 1500)
+              Logger.Warn($"Automatic fan control callback took {elapsed.ElapsedMilliseconds}ms (>1500ms).");
           }
         }, null, 100, 1000);
 
