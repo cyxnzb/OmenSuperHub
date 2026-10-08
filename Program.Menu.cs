@@ -80,7 +80,6 @@ namespace OmenSuperHub {
           if (!menu.IsDisposed) action();
         }));
       } catch (InvalidOperationException) { }
-      catch (ObjectDisposedException) { }
     }
 
     static void BuildTrayMenu(ContextMenuStrip menu) {
