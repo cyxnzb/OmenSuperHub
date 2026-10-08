@@ -573,6 +573,7 @@ namespace OmenSuperHub {
       int sleepMs = 1000;
       var computerLock = new object();
       string lastCpuTemperatureSource = null;
+      string lastGpuTemperatureSource = null;
 
       var readThread = new Thread(() => {
         while (true) {
@@ -730,6 +731,16 @@ namespace OmenSuperHub {
           if (!string.Equals(sourceLabel, lastCpuTemperatureSource, StringComparison.Ordinal)) {
             Console.Error.WriteLine("CPU temperature source: " + sourceLabel);
             lastCpuTemperatureSource = sourceLabel;
+          }
+          // Never publish temperature from one GPU with power/clock from another.
+          // A missing NVIDIA power sensor is unavailable, not AMD iGPU power.
+          if (selectedGpuPowerPriority != selectedGpuPriority) pGpu = -1f;
+          if (selectedGpuClockPriority != selectedGpuPriority) fGpu = 0f;
+          string gpuSourceLabel = selectedGpuPriority == 2 ? "NVIDIA GPU Core" :
+                                  selectedGpuPriority == 1 ? "AMD GPU Core" : "unavailable";
+          if (!string.Equals(gpuSourceLabel, lastGpuTemperatureSource, StringComparison.Ordinal)) {
+            Console.Error.WriteLine("GPU temperature source: " + gpuSourceLabel);
+            lastGpuTemperatureSource = gpuSourceLabel;
           }
           gGpu = tGpuSample.HasValue;
           float outCpuTemp = tCpuSample ?? -1f;
