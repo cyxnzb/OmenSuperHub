@@ -1358,13 +1358,13 @@ namespace OmenSuperHub {
       }
 
       if (monitorCPU && cpuTempReady) {
-        CPUPower = queryUtc - lastCpuPowerSampleUtc <= hardwareSampleTimeout ? rawPowerCPU : 0f;
+        CPUPower = IsFresh(lastCpuPowerSampleUtc) ? rawPowerCPU : 0f;
         CPUFrequency = rawFrequencyCPU;
       }
       if (monitorGPU) {
         getGPU = rawGotGPU;
         if (getGPU) {
-          if (queryUtc - lastGpuPowerSampleUtc > hardwareSampleTimeout || (int)(rawPowerGPU * 10) == 5900)
+          if (!IsFresh(lastGpuPowerSampleUtc) || (int)(rawPowerGPU * 10) == 5900)
             GPUPower = 0;
           else
             GPUPower = rawPowerGPU;
