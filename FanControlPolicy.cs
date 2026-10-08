@@ -7,6 +7,13 @@ namespace OmenSuperHub {
     public const int Deadband = 2;
     public const int FallStep = 2;
 
+    // Observed RPM is only an initial seed, never the previous software command.
+    // Turning RPM display/polling on must not change the automatic ramp policy.
+    public static int SelectControlBaseline(int lastRequested, int observed) {
+      int prior = lastRequested >= 0 ? lastRequested : observed;
+      return Math.Max(0, Math.Min(255, prior));
+    }
+
     // Returns -1 to skip a write when the non-emergency change is inside the deadband.
     // Emergency paths always return the full target, including when decreasing.
     public static int CalculateNextOrSkip(int target, int current, bool emergency) {

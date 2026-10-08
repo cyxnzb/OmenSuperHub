@@ -1674,13 +1674,12 @@ namespace OmenSuperHub {
       }
 
       int target = Math.Max(0, Math.Min(255, targetRpm / 100));
-      int current = Volatile.Read(ref lastAutomaticFanCommand);
-      if (current < 0) {
-        // First AUTO tick after a mode change: seed from best available state.
-        lock (fanSpeedNow) {
-          current = Math.Max(0, Math.Min(255, (fanSpeedNow[0] + fanSpeedNow[1]) / 2));
-        }
-      }
+      // Use observed speed only for the first AUTO command after a mode change.
+      // Subsequent ramps must depend on the prior requested command, not EC lag.
+      int observed;
+      lock (fanSpeedNow) { observed = (fanSpeedNow[0] + fanSpeedNow[1]) / 2; }
+      int current = FanControlPolicy.SelectControlBaseline(
+          Volatile.Read(ref lastAutomaticFanCommand), observed);
 
       bool emergency = IsEmergencyThermalState();
       if (emergency && platformMaxFanSpeed.HasValue)

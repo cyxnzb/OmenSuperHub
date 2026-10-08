@@ -21,3 +21,14 @@ AssertNext 40 60 $true 40 'emergency bypasses slow cool-down'
 AssertNext 999 250 $false 255 'target is clamped to device command range'
 AssertNext -10 5 $false 3 'negative target is clamped'
 Write-Host 'All fan ramp policy checks passed.'
+
+
+function AssertBaseline([int]$requested, [int]$observed, [int]$expected, [string]$label) {
+  $actual = [OmenSuperHub.FanControlPolicy]::SelectControlBaseline($requested, $observed)
+  if ($actual -ne $expected) { throw ("{0}: {1} expected {2}" -f $label, $actual, $expected) }
+  Write-Host ("PASS {0}: {1}" -f $label, $actual)
+}
+AssertBaseline -1 20 20 'first tick uses observed RPM'
+AssertBaseline 100 20 100 'EC lag cannot force another ramp-up'
+AssertBaseline 100 250 100 'observed overshoot does not change command baseline'
+AssertBaseline 1000 20 255 'requested baseline is clamped'
