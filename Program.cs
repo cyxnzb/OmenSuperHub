@@ -145,6 +145,9 @@ namespace OmenSuperHub {
     static SortedDictionary<float, int> CPUTempFanMap = new SortedDictionary<float, int>();
     static SortedDictionary<float, int> GPUTempFanMap = new SortedDictionary<float, int>();
     static System.Threading.Timer fanControlTimer;
+    // A timer may dispatch a second callback while the first one is blocked in BIOS WMI.
+    // Never allow concurrent automatic-fan writes; the next periodic tick retries.
+    static int _isApplyingAutomaticFanControl = 0;
     static System.Timers.Timer tooltipUpdateTimer; // Timer for updating tooltip
     static System.Windows.Forms.Timer checkFloatingTimer, optimiseTimer;
     static NotifyIcon trayIcon;
@@ -310,10 +313,21 @@ namespace OmenSuperHub {
 
         // Main loop to query CPU and GPU temperature every second
         fanControlTimer = new System.Threading.Timer((e) => {
+          // System.Threading.Timer does not serialize callbacks. Skip only overlapping
+          // invocations; never queue stale fan-speed targets behind a slow WMI call.
+          if (Interlocked.CompareExchange(ref _isApplyingAutomaticFanControl, 1, 0) != 0)
+            return;
+          var elapsed = System.Diagnostics.Stopwatch.StartNew();
           try {
             ApplyAutomaticFanControl();
           } catch (Exception ex) {
             Logger.Error($"Automatic fan control failed: {ex.Message}");
+          } finally {
+            elapsed.Stop();
+            Interlocked.Exchange(ref _isApplyingAutomaticFanControl, 0);
+            // Diagnostic only: distinguish slow BIOS/WMI calls from normal fan-curve behavior.
+            if (elapsed.ElapsedMilliseconds > 1500)
+              Logger.Warn($"Automatic fan control callback took {elapsed.ElapsedMilliseconds}ms (>1500ms).");
           }
         }, null, 100, 1000);
 
