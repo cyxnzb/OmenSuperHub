@@ -47,6 +47,11 @@ jobs:
         run: |
           .\tests\Test-FanControlPolicy.ps1
 
+      - name: Test telemetry timestamp freshness (no hardware)
+        shell: pwsh
+        run: |
+          .\tests\Test-TelemetryFreshness.ps1
+
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
