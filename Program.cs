@@ -138,6 +138,8 @@ namespace OmenSuperHub {
     static volatile bool gpuTempReady = false; // GPU 温度已初始化给平滑值，允许参与风扇控制
     static volatile bool hwMonitorStopping = false; // 主动停止时置 true，阻止 Exited 自动重启
     static int hwMonitorGeneration = 0; // Invalidate delayed restarts when monitor intentionally stops or app exits.
+    static readonly object hwMonitorLifecycleLock = new object();
+    static int hwMonitorStartFailures = 0;
     static volatile bool hwMonitorShuttingDown = false;
     static Process hwMonitorProcess;
     static StreamWriter hwMonitorIn;
@@ -754,9 +756,16 @@ namespace OmenSuperHub {
       }
     }
 
+    static bool IsHardwareMonitorRunning() {
+      try { return hwMonitorProcess != null && !hwMonitorProcess.HasExited; }
+      catch (InvalidOperationException) { return false; } // Process.Start failed.
+      catch (ObjectDisposedException) { return false; }
+    }
+
     static void StartHardwareMonitor() {
+      lock (hwMonitorLifecycleLock) {
       if (hwMonitorShuttingDown) return;
-      if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) return;
+      if (IsHardwareMonitorRunning()) return;
       int monitorGeneration = Interlocked.Increment(ref hwMonitorGeneration);
       // A previous explicit stop must not suppress an unexpected exit of this new instance.
       hwMonitorStopping = false;
@@ -887,6 +896,7 @@ namespace OmenSuperHub {
 
       try {
         hwMonitorProcess.Start();
+        hwMonitorStartFailures = 0;
         hwMonitorIn = hwMonitorProcess.StandardInput;
         hwMonitorProcess.BeginOutputReadLine();
         hwMonitorProcess.BeginErrorReadLine(); // 必须读取错误流避免死锁
@@ -897,32 +907,50 @@ namespace OmenSuperHub {
         // A failed monitor launch must be visible in diagnostics; silently swallowing
         // it could leave automatic fan control without a usable temperature source.
         Logger.Error($"Hardware monitor startup failed: {ex.Message}");
+        // Do not retain an unstarted Process: accessing HasExited later can throw.
+        Interlocked.Increment(ref hwMonitorGeneration);
+        try { hwMonitorProcess?.Kill(); } catch { }
+        try { hwMonitorProcess?.Dispose(); } catch { }
+        hwMonitorProcess = null;
+        hwMonitorIn = null;
+        int retryGeneration = Volatile.Read(ref hwMonitorGeneration);
+        hwMonitorStartFailures = Math.Min(hwMonitorStartFailures + 1, 6);
+        int retryDelaySeconds = Math.Min(60, 3 * (1 << Math.Min(4, hwMonitorStartFailures - 1)));
+        System.Threading.Tasks.Task.Delay(retryDelaySeconds * 1000).ContinueWith(_ => {
+          if (hwMonitorShuttingDown || retryGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
+          try { StartHardwareMonitor(); }
+          catch (Exception retryException) { Logger.Error($"Monitor retry failed: {retryException.Message}"); }
+        });
+      }
       }
     }
 
     static void SetGpuMonitorState(bool enable) {
-      if (hwMonitorIn != null && hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
+      if (hwMonitorIn != null && IsHardwareMonitorRunning()) {
         try { hwMonitorIn.WriteLine(enable ? "GPU:ON" : "GPU:OFF"); } catch { }
       }
     }
 
     static void SetCpuMonitorState(bool enable) {
-      if (hwMonitorIn != null && hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
+      if (hwMonitorIn != null && IsHardwareMonitorRunning()) {
         try { hwMonitorIn.WriteLine(enable ? "CPU:ON" : "CPU:OFF"); } catch { }
       }
     }
 
     static void SetMonitorInterval(int ms) {
-      if (hwMonitorIn != null && hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
+      if (hwMonitorIn != null && IsHardwareMonitorRunning()) {
         try { hwMonitorIn.WriteLine($"INTERVAL:{ms}"); } catch { }
       }
     }
 
     static void StopHardwareMonitor() {
-      Interlocked.Increment(ref hwMonitorGeneration);
-      if (hwMonitorProcess != null && !hwMonitorProcess.HasExited) {
-        hwMonitorStopping = true;
-        try { hwMonitorProcess.Kill(); } catch { hwMonitorStopping = false; }
+      lock (hwMonitorLifecycleLock) {
+        Interlocked.Increment(ref hwMonitorGeneration);
+        if (IsHardwareMonitorRunning()) {
+          hwMonitorStopping = true;
+          try { hwMonitorProcess.Kill(); } catch { hwMonitorStopping = false; }
+        }
+        hwMonitorIn = null;
       }
     }
 
