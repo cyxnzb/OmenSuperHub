@@ -838,7 +838,11 @@ namespace OmenSuperHub {
         SetGpuMonitorState(monitorGPU);
         SetCpuMonitorState(monitorCPU);
         SetMonitorInterval(monitorRefreshRate == "high" ? 250 : 1000);
-      } catch (Exception) { }
+      } catch (Exception ex) {
+        // A failed monitor launch must be visible in diagnostics; silently swallowing
+        // it could leave automatic fan control without a usable temperature source.
+        Logger.Error($"Hardware monitor startup failed: {ex.Message}");
+      }
     }
 
     static void SetGpuMonitorState(bool enable) {
