@@ -1,10 +1,12 @@
 # Stability Roadmap
 
+> Historical stability phase plan. For the current 2026-10-08 audit, five-dimension priorities, acceptance gates and next tasks, see [`PROJECT_STATUS_AND_OPTIMIZATION_PLAN.md`](PROJECT_STATUS_AND_OPTIMIZATION_PLAN.md).
+
 This roadmap intentionally prioritizes predictable hardware behavior over new features.
 
 ## Phase A — PR #58 hardware gate
 
-Status: implementation complete, hardware UAT required before merge.
+Status: merged into `master` via PR #58 on 2026-09-30. The merge commit reports local hardware UAT, but this remains a continuing regression gate across BIOS/hardware combinations; it is **not** proof of universal compatibility.
 
 Scope:
 
