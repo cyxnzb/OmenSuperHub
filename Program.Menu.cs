@@ -385,12 +385,14 @@ namespace OmenSuperHub {
       }
       fanControlMenu.DropDownItems.Add(CreateMenuItem(Strings.FanAuto, "fanControlGroup", (s, e) => {
         fanControl = "auto";
+        ResetAutomaticFanCommand();
         SetMaxFanSpeedOff();
         fanControlTimer.Change(0, 1000);
         SaveConfig("FanControl");
       }, true));
       fanControlMenu.DropDownItems.Add(CreateMenuItem(Strings.FanMax, "fanControlGroup", (s, e) => {
         fanControl = "max";
+        ResetAutomaticFanCommand();
         SetMaxFanSpeedOn();
         fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
         SaveConfig("FanControl");
@@ -407,6 +409,7 @@ namespace OmenSuperHub {
 
       fanTrackBar.ValueChanged += (sender, e) => {
         fanControl = fanTrackBar.Value * 100 + " RPM";
+        ResetAutomaticFanCommand();
         fanValueLabel.Text = string.Format(Strings.CurrentSliderValueTemp, $"{fanTrackBar.Value * 100} RPM");
         fanControlTimer.Change(Timeout.Infinite, Timeout.Infinite);
         SetFanLevel((byte)fanTrackBar.Value, (byte)fanTrackBar.Value, Is3FanNb);

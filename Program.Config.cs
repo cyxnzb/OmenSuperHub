@@ -396,6 +396,7 @@ namespace OmenSuperHub {
     }
 
     static void RestoreFanControl() {
+      ResetAutomaticFanCommand();
       if (fanControl == "auto") {
         SetMaxFanSpeedOff();
         fanControlTimer.Change(0, 1000);
@@ -1279,6 +1280,7 @@ namespace OmenSuperHub {
       }
 
       // 风扇控制模式
+      ResetAutomaticFanCommand();
       if (fanControl == "auto") {
         SetMaxFanSpeedOff();
         fanControlTimer.Change(0, 1000);
