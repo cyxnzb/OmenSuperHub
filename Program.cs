@@ -824,7 +824,8 @@ namespace OmenSuperHub {
           if (gpuTempReady && sampleUtc - lastGpuTempSampleUtc > hardwareSampleTimeout) {
             gpuTempReady = false;
             rawGotGPU = false;
-            GPUTemp = 40;
+            // Keep the last numeric value only as a cached sample; validity is false.
+            // Do not inject a synthetic 40 C sample when the GPU stops reporting.
             GPUPower = 0;
             rawFrequencyGPU = 0f;
             GPUFrequency = 0f;
@@ -1103,11 +1104,12 @@ namespace OmenSuperHub {
     static void UpdateDynamicIcon() {
       if (customIcon != "dynamic") return;
       if (trayIcon?.ContextMenuStrip != null && trayIcon.ContextMenuStrip.Visible) return;
-      if (monitorCPU) {
+      if (monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)) {
         GenerateDynamicIcon((int)CPUTemp);
-      } else if (monitorGPU) {
+      } else if (monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)) {
         GenerateDynamicIcon((int)GPUTemp);
       } else {
+        // Unknown temperature must not be displayed as an apparently valid 50/40 C.
         trayIcon.Icon = Properties.Resources.smallfan;
       }
     }
@@ -1286,11 +1288,17 @@ namespace OmenSuperHub {
       if (dataLocalize != "on") return;
       if (Interlocked.CompareExchange(ref _isSyncingDataToTxt, 1, 0) != 0) return;
 
-      string cpuText = ((int)Math.Round(CPUTemp)).ToString();
-      string gpuText = ((int)Math.Round(GPUTemp)).ToString();
-      string fanText;
-      lock (fanSpeedNow) {
-        fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
+      // Export -1 for unavailable metrics rather than plausible-looking defaults.
+      // Keep numeric text for consumers that parse these files as integers.
+      string cpuText = monitorCPU && cpuTempReady && IsFresh(lastCpuTempSampleUtc)
+          ? ((int)Math.Round(CPUTemp)).ToString() : "-1";
+      string gpuText = monitorGPU && gpuTempReady && IsFresh(lastGpuTempSampleUtc)
+          ? ((int)Math.Round(GPUTemp)).ToString() : "-1";
+      string fanText = "-1";
+      if (monitorFan) {
+        lock (fanSpeedNow) {
+          fanText = ((fanSpeedNow[0] + fanSpeedNow[1]) * 50).ToString();
+        }
       }
 
       System.Threading.Tasks.Task.Run(() => {

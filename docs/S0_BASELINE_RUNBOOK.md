@@ -67,3 +67,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Collect-ResourceBase
 - [ ] 经实机确认后建立 S1 独立改动与回退基线
 
 脚本提交≠脚本已经在目标 Windows 设备运行，CI 编译成功≠实机热/风扇验证。
+
+
+## 本地温度/RPM 文本导出的无效值约定
+
+当 `DataLocalize` 启用时，`cpu_temp.txt`、`gpu_temp.txt`、
+`fan_rpm.txt` 继续保留整数格式；读数缺失、超过五秒或实际风扇转速
+监控未开启时写入 **`-1`**（明确表示不可用），不会冒充 `0`、
+`40`、`50` 或用户下发的请求转速。第三方悬浮层应先检查 `>=0`
+才显示读数。负数不参与温控判断。
