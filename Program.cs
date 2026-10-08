@@ -719,6 +719,8 @@ namespace OmenSuperHub {
       };
 
       hwMonitorProcess.OutputDataReceived += (s, e) => {
+        // Discard queued output from a superseded monitor process.
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (string.IsNullOrEmpty(e.Data)) return;
         //Debug.WriteLine("[HWMonitor OUT] " + e.Data); // 将子进程输出重定向到VS的输出窗口
         if (e.Data.StartsWith("CRASH:")) return;
@@ -799,6 +801,7 @@ namespace OmenSuperHub {
       };
 
       hwMonitorProcess.ErrorDataReceived += (s, e) => {
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (string.IsNullOrEmpty(e.Data)) return;
         Logger.Error("HardwareMonitor [HWMonitor ERR] " + e.Data);
       };
