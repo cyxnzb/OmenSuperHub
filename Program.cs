@@ -805,6 +805,8 @@ namespace OmenSuperHub {
 
       hwMonitorProcess.EnableRaisingEvents = true;
       hwMonitorProcess.Exited += (s, e) => {
+        // A superseded process must never reset the new instance's temperature state.
+        if (monitorGeneration != Volatile.Read(ref hwMonitorGeneration)) return;
         if (hwMonitorStopping) {
           hwMonitorStopping = false;
           return;
