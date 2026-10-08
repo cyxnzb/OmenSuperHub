@@ -760,8 +760,7 @@ namespace OmenSuperHub {
 
     static bool IsHardwareMonitorRunning() {
       try { return hwMonitorProcess != null && !hwMonitorProcess.HasExited; }
-      catch (InvalidOperationException) { return false; } // Process.Start failed.
-      catch (ObjectDisposedException) { return false; }
+      catch (InvalidOperationException) { return false; } // Also covers ObjectDisposedException.
     }
 
     static void StartHardwareMonitor() {
