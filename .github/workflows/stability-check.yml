@@ -71,3 +71,12 @@ jobs:
 
       - name: Build Release x64
         run: msbuild OmenSuperHub.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /p:RestorePackages=false
+
+      - name: Publish isolated UAT build
+        if: github.event.pull_request.head.ref == 'uat-candidate-20261008'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmenSuperHub-UAT-${{ github.sha }}
+          path: bin/x64/Release/
+          if-no-files-found: error
+          retention-days: 14
