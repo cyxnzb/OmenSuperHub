@@ -597,6 +597,8 @@ namespace OmenSuperHub {
         // Prefer discrete NVIDIA telemetry when an AMD integrated GPU is also enumerated.
         // Otherwise sensor enumeration order can silently replace dGPU temperature.
         int selectedGpuPriority = 0;
+        int selectedGpuPowerPriority = 0;
+        int selectedGpuClockPriority = 0;
         bool exactCpuClockFound = false;
         int cpuTempPriority = 0;
         float cpuFallbackTempSum = 0f;
@@ -676,12 +678,17 @@ namespace OmenSuperHub {
                       selectedGpuPriority = gpuPriority;
                     }
                   }
-                  if (gpuPriority >= selectedGpuPriority && sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
+                  if (gpuPriority >= selectedGpuPowerPriority && sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
-                    if (IsPlausiblePower(value)) pGpu = value;
+                    if (IsPlausiblePower(value)) {
+                      pGpu = value;
+                      selectedGpuPowerPriority = gpuPriority;
+                    }
                   }
-                  if (gpuPriority >= selectedGpuPriority && sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue)
+                  if (gpuPriority >= selectedGpuClockPriority && sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue) {
                     fGpu = sensor.Value.GetValueOrDefault();
+                    selectedGpuClockPriority = gpuPriority;
+                  }
                 }
               } catch { }
             }
