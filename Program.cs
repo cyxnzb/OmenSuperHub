@@ -609,6 +609,11 @@ namespace OmenSuperHub {
       //Console.Error.WriteLine("CRASH: " + $"4: {sw.ElapsedMilliseconds}ms");
       while (true) {
         bool gGpu = false;
+        // Prefer discrete NVIDIA telemetry when an AMD integrated GPU is also enumerated.
+        // Otherwise sensor enumeration order can silently replace dGPU temperature.
+        int selectedGpuPriority = 0;
+        int selectedGpuPowerPriority = 0;
+        int selectedGpuClockPriority = 0;
         bool exactCpuClockFound = false;
         int cpuTempPriority = 0;
         string cpuTemperatureSource = null;
@@ -682,16 +687,25 @@ namespace OmenSuperHub {
                     }
                   }
                 } else if (hw.HardwareType == LibreHardwareType.GpuNvidia || hw.HardwareType == LibreHardwareType.GpuAmd) {
+                  int gpuPriority = hw.HardwareType == LibreHardwareType.GpuNvidia ? 2 : 1;
                   if (sensor.SensorType == LibreSensorType.Temperature && sensor.Name == "GPU Core" && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
-                    if (IsPlausibleTemperature(value)) tGpuSample = value;
+                    if (IsPlausibleTemperature(value) && gpuPriority >= selectedGpuPriority) {
+                      tGpuSample = value;
+                      selectedGpuPriority = gpuPriority;
+                    }
                   }
-                  if (sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
+                  if (gpuPriority >= selectedGpuPowerPriority && sensor.SensorType == LibreSensorType.Power && sensor.Name == "GPU Package" && sensor.Value.HasValue) {
                     float value = sensor.Value.Value;
-                    if (IsPlausiblePower(value)) pGpu = value;
+                    if (IsPlausiblePower(value)) {
+                      pGpu = value;
+                      selectedGpuPowerPriority = gpuPriority;
+                    }
                   }
-                  if (sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue)
+                  if (gpuPriority >= selectedGpuClockPriority && sensor.SensorType == LibreSensorType.Clock && sensor.Name == "GPU Core" && sensor.Value.HasValue) {
                     fGpu = sensor.Value.GetValueOrDefault();
+                    selectedGpuClockPriority = gpuPriority;
+                  }
                 }
               } catch { }
             }
